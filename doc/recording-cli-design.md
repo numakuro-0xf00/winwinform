@@ -5,10 +5,13 @@
 Unix哲学に基づく独立パイプライン型。各CLIツールは単一責務でNDJSONストリームを出力し、組み合わせて使用する。
 
 ```
-wfth-record   — 入力イベント（マウス/KB）をキャプチャ → NDJSON
+wfth-record   — 入力イベント（マウス/KB）+ スクリーンショット → NDJSON
 wfth-inspect  — UIAツリー変化を監視 → NDJSON（実装済み）
-wfth-capture  — スクリーンショット撮影 → NDJSON + PNG（設計未着手）
+wfth-capture  — スクリーンショット単体撮影（デバッグ/独立利用）→ NDJSON + PNG
 wfth-correlate — 複数NDJSONを時系列マージ → 統合ログJSON
+
+※ スクリーンショット撮影の詳細設計 → capture-design.md
+※ wfth-record が --capture オプションで撮影を統合（主要ユースケース）
 ```
 
 ---
@@ -151,9 +154,8 @@ Program.cs (System.CommandLine)
 wfth-correlate [options] [session-dir]
 
 Inputs（セッションディレクトリの規約ファイル名を自動検出、または明示指定）:
-  --input <path>       入力イベントNDJSON（wfth-record出力）
+  --record <path>      wfth-record出力NDJSON（入力イベント + スクリーンショット混在）
   --uia <path>         UIAツリー変化NDJSON（wfth-inspect watch出力）
-  --capture <path>     スクリーンショットNDJSON（wfth-capture出力）
   --app-log <path>     アプリ内ロガーNDJSON（将来、IPC経由）
 
 Options:
@@ -166,27 +168,27 @@ Options:
 ### 3.2 動作フロー
 
 ```
-1. 全NDJSONファイルを読み込み
-2. 全イベントをタイムスタンプでソート
-3. 入力イベントを「操作アクション」に変換:
+1. record.ndjson を読み込み、type フィールドで入力系（mouse, key, window, session）と screenshot に分類
+2. uia.ndjson, app-log.ndjson を読み込み
+3. 全イベントをタイムスタンプでソート
+4. 入力イベントを「操作アクション」に変換:
    a. マウス: LeftDown + LeftUp（近接）→ Click、Move(drag) → Drag
    b. キーボード: 連続キー入力 → TextInput に集約（--text-timeout で区切り）
    c. 特殊キー（Enter, Tab, Escape等）→ 独立アクション
-4. 各アクションに対して時間窓（--window）内の関連イベントを紐付け:
+5. 各アクションに対して時間窓（--window）内の関連イベントを紐付け:
    - UIA変化（アクション後 0〜window ms）
-   - スクリーンショット（before/after）
+   - スクリーンショット（record.ndjson内のscreenshot型イベント、before/after）
    - アプリ内ログ（アクション前後 window ms）
-5. 統合ログ（session.json）を出力
+6. 統合ログ（session.json）を出力
 ```
 
 ### 3.3 セッションディレクトリ規約
 
 ```
 sessions/rec-20260222-143000/
-├── input.ndjson       ← wfth-record 出力
+├── record.ndjson      ← wfth-record 出力（入力イベント + スクリーンショットメタデータ）
 ├── uia.ndjson         ← wfth-inspect watch 出力
-├── capture.ndjson     ← wfth-capture 出力（設計未着手）
-├── screenshots/       ← wfth-capture が保存するPNGファイル
+├── screenshots/       ← wfth-record --capture が保存するPNGファイル
 │   ├── 0001_before.png
 │   ├── 0001_after.png
 │   ├── 0002_after.png
@@ -194,7 +196,7 @@ sessions/rec-20260222-143000/
 └── session.json       ← wfth-correlate 出力
 ```
 
-`wfth-correlate sessions/rec-20260222-143000/` でディレクトリを指定すると、規約ファイル名（input.ndjson, uia.ndjson, capture.ndjson）を自動検出する。存在しないファイルはスキップ（警告出力）。
+`wfth-correlate sessions/rec-20260222-143000/` でディレクトリを指定すると、規約ファイル名（record.ndjson, uia.ndjson）を自動検出する。存在しないファイルはスキップ（警告出力）。
 
 ### 3.4 入力イベントの集約ルール
 
@@ -316,9 +318,8 @@ key(down, T) + key(down, T+50) + key(down, T+100) + [500ms無入力]
 Program.cs (System.CommandLine)
   ├── Readers/
   │   ├── NdJsonReader.cs            — NDJSON汎用リーダー
-  │   ├── InputEventReader.cs        — wfth-record出力パーサー
+  │   ├── RecordEventReader.cs       — wfth-record出力パーサー（input + screenshot 分類）
   │   ├── UiaEventReader.cs          — wfth-inspect watch出力パーサー
-  │   ├── CaptureEventReader.cs      — wfth-capture出力パーサー
   │   └── AppLogReader.cs            — アプリ内ロガー出力パーサー
   ├── Aggregation/
   │   ├── MouseClickAggregator.cs    — Down+Up → Click/DoubleClick/Drag
@@ -344,10 +345,11 @@ Program.cs (System.CommandLine)
 SESSION=sessions/rec-$(date +%Y%m%d-%H%M%S)
 mkdir -p $SESSION/screenshots
 
-# ツール並列起動
-wfth-record  --process SampleApp                > $SESSION/input.ndjson &
+# ツール並列起動（wfth-record が --capture でスクリーンショットも統合）
+wfth-record  --process SampleApp --capture \
+             --capture-dir $SESSION/screenshots  > $SESSION/record.ndjson &
 PID_RECORD=$!
-wfth-inspect watch --process SampleApp          > $SESSION/uia.ndjson &
+wfth-inspect watch --process SampleApp           > $SESSION/uia.ndjson &
 PID_INSPECT=$!
 
 # 手動テスト実施...
@@ -366,8 +368,9 @@ wfth-correlate $SESSION/ -o $SESSION/session.json
 SESSION=sessions/rec-$(date +%Y%m%d-%H%M%S)
 mkdir -p $SESSION/screenshots
 
-# アプリ起動 + 記録開始
-wfth-record --launch "C:\path\SampleApp.exe" > $SESSION/input.ndjson &
+# アプリ起動 + 記録開始（スクリーンショット付き）
+wfth-record --launch "C:\path\SampleApp.exe" --capture \
+            --capture-dir $SESSION/screenshots > $SESSION/record.ndjson &
 PID_RECORD=$!
 
 # wfth-record がstartマーカーを出力するまで待機してからinspect開始
@@ -378,29 +381,29 @@ wfth-inspect watch --process $PROC > $SESSION/uia.ndjson &
 # ... テスト実施 → 停止 → correlate
 ```
 
-### パイプで直接結合（将来検討）
+### スクリーンショット単体（デバッグ用）
 
 ```bash
-# wfth-record の出力を tee で分岐
-wfth-record --process SampleApp \
-  | tee $SESSION/input.ndjson \
-  | wfth-capture --process SampleApp --stdin-trigger \
-  > $SESSION/capture.ndjson
+# 1回だけスナップショット
+wfth-capture --process SampleApp --once --out-dir ./debug
+
+# 変化監視モードで定期撮影
+wfth-capture --process SampleApp --interval 1000 > captures.ndjson
 ```
 
 ---
 
 ## 5. 今後の設計課題
 
-### wfth-capture（設計未着手）
-- キャプチャのトリガー方式: stdin監視? ファイル監視? 独立ポーリング?
-- 差分検知の閾値設定
-- スクリーンショットの解像度・圧縮設定
-- before/after のタイミング制御
-
 ### 全体
 - 各ツールの終了シグナル伝搬（1つ停止したら全停止するか）
-- エラー発生時のリカバリ（入力フックのクリーンアップ等）
-- 高DPI / マルチモニタ環境での座標正規化
+- エラー発生時のリカバリ（入力フックのクリーンアップ等） → recording-reliability-design.md で設計済み
+- 高DPI / マルチモニタ環境での座標正規化 → recording-reliability-design.md で設計済み
 - セッションディレクトリの管理（一覧、削除、アーカイブ）
-- CIヘッドレス環境での実行可能性
+- CIヘッドレス環境での実行可能性 → recording-integration-design.md で設計済み
+
+### 関連設計ドキュメント
+- `capture-design.md` — スクリーンショットキャプチャ詳細設計（共有ライブラリ + CLIラッパー）
+- `recording-reliability-design.md` — 信頼性・安定性設計
+- `recording-data-quality-design.md` — データの質と量設計
+- `recording-integration-design.md` — 外部連携設計
