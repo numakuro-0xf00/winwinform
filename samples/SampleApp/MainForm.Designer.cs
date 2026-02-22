@@ -112,6 +112,33 @@ partial class MainForm
         this.dgvCustomers.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         this.dgvCustomers.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
         //
+        // pnlTest
+        //
+        this.pnlTest = new Panel();
+        this.pnlTest.Name = "pnlTest";
+        this.pnlTest.Dock = DockStyle.Bottom;
+        this.pnlTest.Height = 40;
+        this.pnlTest.Padding = new Padding(4);
+        this.pnlTest.Controls.Add(this.btnTest);
+        this.pnlTest.Controls.Add(this.txtTest);
+        //
+        // txtTest
+        //
+        this.txtTest = new TextBox();
+        this.txtTest.Name = "txtTest";
+        this.txtTest.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right;
+        this.txtTest.Location = new Point(4, 8);
+        this.txtTest.Size = new Size(700, 23);
+        //
+        // btnTest
+        //
+        this.btnTest = new Button();
+        this.btnTest.Name = "btnTest";
+        this.btnTest.Text = "テスト";
+        this.btnTest.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        this.btnTest.Location = new Point(710, 7);
+        this.btnTest.Size = new Size(80, 25);
+        //
         // statusStrip
         //
         this.statusStrip.Items.AddRange(new ToolStripItem[] { this.toolStripStatusLabel });
@@ -128,6 +155,7 @@ partial class MainForm
         this.AutoScaleMode = AutoScaleMode.Font;
         this.ClientSize = new Size(800, 450);
         this.Controls.Add(this.dgvCustomers);
+        this.Controls.Add(this.pnlTest);
         this.Controls.Add(this.toolStrip);
         this.Controls.Add(this.menuStrip);
         this.Controls.Add(this.statusStrip);
@@ -161,4 +189,7 @@ partial class MainForm
     private DataGridView dgvCustomers;
     private StatusStrip statusStrip;
     private ToolStripStatusLabel toolStripStatusLabel;
+    private Panel pnlTest;
+    private TextBox txtTest;
+    private Button btnTest;
 }
