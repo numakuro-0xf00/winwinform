@@ -1,0 +1,32 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build*)",
+      "Bash(dotnet test*)",
+      "Bash(dotnet restore*)",
+      "Bash(dotnet clean*)",
+      "Bash(dotnet run*)",
+      "Bash(dotnet add*)",
+      "Bash(dotnet list*)",
+      "Bash(dotnet sln*)",
+      "Bash(dotnet new*)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git branch*)",
+      "Bash(git show*)",
+      "Bash(git stash list*)",
+      "Bash(gh *)",
+      "Bash(ls *)",
+      "Bash(pwd)",
+      "Bash(which *)",
+      "Bash(dotnet-script *)",
+      "Skill(roslyn-query*)",
+      "git * add"
+    ],
+    "deny": []
+  }
+}
