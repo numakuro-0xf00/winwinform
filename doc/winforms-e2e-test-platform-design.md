@@ -1038,24 +1038,24 @@ AIエージェントへの入力となる統合ログの形式。
 
 ### Recording Engine周り（優先度高）
 
-- グローバルフックがクラッシュした場合のリカバリ
-- 対象アプリが応答なし（ハング）になった場合の挙動
-- マルチウィンドウ・モーダルダイアログの追跡
-- 高DPI環境や複数モニタでの座標ズレ
-- 開始・停止・一時停止のワークフロー設計
-- テスト仕様書のステップとRecordingの紐付けタイミング
-- 手動テスターが使うUI（Recording Controller）の設計
-- ノイズの除去（意図しないクリック、操作ミスの扱い）
-- スクリーンショットの保存戦略（容量と解像度のバランス）
-- UIAで取れない要素の検出と画像認識用リファレンス画像の自動抽出
-- アプリ内ロガーとの時刻同期・イベント突合の精度
-- CIでのヘッドレス実行の可能性
+- [x] グローバルフックがクラッシュした場合のリカバリ → `recording-reliability-design.md`
+- [x] 対象アプリが応答なし（ハング）になった場合の挙動 → `recording-reliability-design.md`
+- [x] マルチウィンドウ・モーダルダイアログの追跡 → `recording-reliability-design.md`
+- [x] 高DPI環境や複数モニタでの座標ズレ → `recording-reliability-design.md`
+- [ ] 開始・停止・一時停止のワークフロー設計（開始・停止は `recording-cli-design.md` で設計済み、一時停止は未設計）
+- [ ] テスト仕様書のステップとRecordingの紐付けタイミング（概念設計は `spec-parser-design.md` にあるが、`--spec` 統合は将来機能）
+- [ ] 手動テスターが使うUI（Recording Controller）の設計
+- [x] ノイズの除去（意図しないクリック、操作ミスの扱い） → `recording-data-quality-design.md`
+- [x] スクリーンショットの保存戦略（容量と解像度のバランス） → `capture-design.md`, `recording-data-quality-design.md`
+- [x] UIAで取れない要素の検出と画像認識用リファレンス画像の自動抽出 → `recording-data-quality-design.md`
+- [x] アプリ内ロガーとの時刻同期・イベント突合の精度 → `recording-integration-design.md`
+- [x] CIでのヘッドレス実行の可能性 → `recording-integration-design.md`
 
-### テスト仕様書パーサー（詳細設計未着手）
+### テスト仕様書パーサー
 
-- Excel/Word等の各形式への対応
-- 非定型な仕様書フォーマットへの対応戦略
-- AIによる仕様書解釈の精度と限界
+- [ ] Excel/Word等の各形式への対応（`.xlsx` は `spec-parser-design.md` で設計済み、Word/PDF は将来拡張）
+- [x] 非定型な仕様書フォーマットへの対応戦略 → `spec-parser-design.md`
+- [ ] AIによる仕様書解釈の精度と限界（設計は `spec-parser-design.md` で完了、実運用評価は将来）
 
 ### AIエージェント（意図的にスコープ外）
 
