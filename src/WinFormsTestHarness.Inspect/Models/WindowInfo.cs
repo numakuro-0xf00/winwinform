@@ -1,8 +1,2 @@
-namespace WinFormsTestHarness.Inspect.Models;
-
-public record WindowInfo(
-    string Hwnd,      // "0x001A0F32" format
-    string Title,
-    string Process,
-    int Pid
-);
+// WindowInfo は Common.Models に移動。後方互換のための型エイリアス。
+global using WindowInfo = WinFormsTestHarness.Common.Models.WindowInfo;

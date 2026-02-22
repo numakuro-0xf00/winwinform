@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.CommandLine.Invocation;
 
 namespace WinFormsTestHarness.Capture.Cli;
 
@@ -43,10 +44,10 @@ internal static class Program
         rootCommand.AddOption(outDirOption);
         rootCommand.AddOption(outOption);
 
-        rootCommand.SetHandler(() =>
+        rootCommand.SetHandler((InvocationContext ctx) =>
         {
             Console.Error.WriteLine("wfth-capture: 未実装（スタブ）");
-            return Task.FromResult(0);
+            ctx.ExitCode = WinFormsTestHarness.Common.Cli.ExitCodes.RuntimeError;
         });
 
         return await rootCommand.InvokeAsync(args);
