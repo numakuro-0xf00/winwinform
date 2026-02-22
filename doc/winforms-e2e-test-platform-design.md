@@ -255,37 +255,47 @@ AIエージェント
 ### 設計原則
 
 - NuGetパッケージとして提供
-- 既存アプリへの変更は最小限（Program.csに1行追加）
-- **条件付きコンパイルにより本番ビルドへの影響ゼロ**
+- 既存アプリへの変更は最小限（Program.csに `#if E2E_TEST` ブロックを1箇所追加）
+- **`#if E2E_TEST` プリプロセッサディレクティブにより、シンボル未定義ビルドではロガーのコードが IL に含まれない**
 
 ### 4.1 条件付きコンパイルによる本番ビルド無害化
 
-C#の `Conditional` 属性を活用。シンボル未定義時は呼び出し側のILからメソッド呼び出しが完全に除去される（引数の評価すら行われない）。
+`#if E2E_TEST` / `#endif` プリプロセッサディレクティブを採用する。`[Conditional("E2E_TEST")]` 属性ではなく `#if` を選択した理由:
+
+- CI で `dotnet build -c Release -p:E2ETestEnabled=true`（Release 最適化 + Logger 有効）が可能
+- Logger 側・アプリ側で独立にシンボル制御できる
+- `#if` ブロックが視覚的に明確で、void メソッド以外にも適用可能
+
+詳細は `logger-architecture-design.md` セクション3を参照。
 
 ```csharp
 public static class TestLogger
 {
-    [Conditional("E2E_TEST")]
-    public static void Attach(LoggerConfig config = null)
+    public static void Attach(LoggerConfig? config = null)
     {
+#if E2E_TEST
         // テストビルド時のみ実行
-        // 本番ビルドではこのメソッド呼び出し自体がILに含まれない
+        // E2E_TEST 未定義時はメソッド本体が空になる
+#endif
     }
 
-    [Conditional("E2E_TEST")]
-    public static void LogEvent(string controlName, string eventName, object value)
+    public static void LogEvent(string controlName, string eventName, object? value = null)
     {
+#if E2E_TEST
         // 同様
+#endif
     }
 }
 ```
 
 ```csharp
-// Program.cs — たった1行追加
+// Program.cs — #if E2E_TEST ブロックを追加
 static void Main()
 {
-    TestLogger.Attach();  // 本番ビルドではコンパイラが除去
-    Application.EnableVisualStyles();
+#if E2E_TEST
+    TestLogger.Attach();
+#endif
+    ApplicationConfiguration.Initialize();
     Application.Run(new MainForm());
 }
 ```
@@ -293,40 +303,22 @@ static void Main()
 ### ビルド構成
 
 ```xml
-<!-- .csproj -->
+<!-- Directory.Build.props -->
+<!-- E2ETest 構成で自動定義 -->
 <PropertyGroup Condition="'$(Configuration)' == 'E2ETest'">
-    <DefineConstants>E2E_TEST;TRACE</DefineConstants>
+    <DefineConstants>$(DefineConstants);E2E_TEST</DefineConstants>
 </PropertyGroup>
 
-<PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <DefineConstants>TRACE</DefineConstants>
+<!-- MSBuild プロパティによる任意構成での有効化 -->
+<PropertyGroup Condition="'$(E2ETestEnabled)' == 'true'">
+    <DefineConstants>$(DefineConstants);E2E_TEST</DefineConstants>
 </PropertyGroup>
-
-<!-- テスト構成でのみパッケージを参照（Release時はアセンブリ自体が含まれない） -->
-<ItemGroup Condition="'$(Configuration)' == 'E2ETest'">
-    <PackageReference Include="WinFormsTestHarness.Logger" Version="1.*" />
-</ItemGroup>
 ```
 
 ```bash
-dotnet build -c Release   # ロガー完全除去、本番バイナリ
-dotnet build -c E2ETest   # ロガー有効、テスト用バイナリ
-```
-
-### 二重防御
-
-```csharp
-public static class TestLogger
-{
-    [Conditional("E2E_TEST")]
-    public static void Attach(LoggerConfig config = null)
-    {
-        #if RELEASE
-            return;  // Release構成では何があっても動作しない
-        #endif
-        // 実際の初期化...
-    }
-}
+dotnet build -c Release                          # 本番バイナリ（ロガーメソッド本体が空）
+dotnet build -c E2ETest                          # ロガー有効、テスト用バイナリ
+dotnet build -c Release -p:E2ETestEnabled=true   # CI用: Release最適化 + ロガー有効
 ```
 
 ### 4.2 ロガーライブラリ構成
@@ -926,15 +918,24 @@ AIエージェントへの入力となる統合ログの形式。**標準は NDJ
 
 ### Recording Engine周り（未設計/残課題）
 
-- 開始・停止・一時停止のワークフロー設計（運用UI含む）
-- 手動テスターが使う UI（Recording Controller）の具体設計
-- 統合ログスキーマのバージョニング方針（後方互換ルール）
+- [x] グローバルフックがクラッシュした場合のリカバリ → `recording-reliability-design.md`
+- [x] 対象アプリが応答なし（ハング）になった場合の挙動 → `recording-reliability-design.md`
+- [x] マルチウィンドウ・モーダルダイアログの追跡 → `recording-reliability-design.md`
+- [x] 高DPI環境や複数モニタでの座標ズレ → `recording-reliability-design.md`
+- [ ] 開始・停止・一時停止のワークフロー設計（開始・停止は `recording-cli-design.md` で設計済み、一時停止は未設計）
+- [ ] テスト仕様書のステップとRecordingの紐付けタイミング（概念設計は `spec-parser-design.md` にあるが、`--spec` 統合は将来機能）
+- [ ] 手動テスターが使うUI（Recording Controller）の設計
+- [x] ノイズの除去（意図しないクリック、操作ミスの扱い） → `recording-data-quality-design.md`
+- [x] スクリーンショットの保存戦略（容量と解像度のバランス） → `capture-design.md`, `recording-data-quality-design.md`
+- [x] UIAで取れない要素の検出と画像認識用リファレンス画像の自動抽出 → `recording-data-quality-design.md`
+- [x] アプリ内ロガーとの時刻同期・イベント突合の精度 → `recording-integration-design.md`
+- [x] CIでのヘッドレス実行の可能性 → `recording-integration-design.md`
 
-### テスト仕様書パーサー（詳細設計は別紙）
+### テスト仕様書パーサー
 
-- Excel/Word等の各形式への対応
-- 非定型な仕様書フォーマットへの対応戦略
-- AIによる仕様書解釈の精度と限界
+- [ ] Excel/Word等の各形式への対応（`.xlsx` は `spec-parser-design.md` で設計済み、Word/PDF は将来拡張）
+- [x] 非定型な仕様書フォーマットへの対応戦略 → `spec-parser-design.md`
+- [ ] AIによる仕様書解釈の精度と限界（設計は `spec-parser-design.md` で完了、実運用評価は将来）
 
 ### AIエージェント（意図的にスコープ外）
 
@@ -959,24 +960,26 @@ AIエージェントへの入力となる統合ログの形式。**標準は NDJ
 
 ---
 
-## 11. プロジェクト構成（想定）
+## 11. プロジェクト構成
 
 ```
 WinFormsTestHarness/
 ├── src/
+│   ├── WinFormsTestHarness.Common/        # 共通ライブラリ（NDJSON I/O, ExitCodes, JsonHelper等）
+│   ├── WinFormsTestHarness.Inspect/       # wfth-inspect — UIAツリー偵察CLI（実装済み）
+│   ├── WinFormsTestHarness.Record/        # wfth-record — 入力イベント記録
+│   ├── WinFormsTestHarness.Capture/       # スクリーンショットキャプチャ共有ライブラリ（classlib）
+│   ├── WinFormsTestHarness.Capture.Cli/   # wfth-capture — スクリーンショットCLIラッパー
+│   ├── WinFormsTestHarness.Aggregate/     # wfth-aggregate — 生イベント集約
+│   ├── WinFormsTestHarness.Correlate/     # wfth-correlate — 時間窓相関
 │   ├── WinFormsTestHarness.Core/          # テスト実行フレームワーク（ドライバー層 + 操作抽象化層）
-│   ├── WinFormsTestHarness.Logger/        # アプリ内ロガー NuGet パッケージ
-│   ├── WinFormsTestHarness.Common/        # 共通CLI/IO/時刻ユーティリティ
-│   ├── WinFormsTestHarness.Record/        # 入力イベント記録（wfth-record）
-│   ├── WinFormsTestHarness.Capture/       # スクリーンショット共有ライブラリ + CLI
-│   ├── WinFormsTestHarness.Inspect/       # UIA偵察・監視（wfth-inspect）
-│   ├── WinFormsTestHarness.Aggregate/     # 生イベント集約（wfth-aggregate）
-│   ├── WinFormsTestHarness.Correlate/     # 時間窓相関（wfth-correlate）
-│   └── WinFormsTestHarness.SpecParser/    # テスト仕様書パーサー（将来）
+│   └── WinFormsTestHarness.Logger/        # アプリ内ロガー NuGet パッケージ
 ├── tests/
 │   └── WinFormsTestHarness.Tests/         # フレームワーク自体のテスト
 ├── samples/
-│   ├── SampleApp/                         # テスト対象サンプルアプリ
-│   └── SampleTests/                       # 生成されたテストコードのサンプル
-└── doc/
+│   └── SampleApp/                         # テスト対象サンプルアプリ
+├── demo/                                  # パイプライン検証用デモデータ
+└── doc/                                   # 設計ドキュメント
 ```
+
+> **Note**: テスト仕様書パーサー（SpecParser）は Phase 2（仕様書駆動テスト生成）の将来構想であり、プロジェクトは未作成。
