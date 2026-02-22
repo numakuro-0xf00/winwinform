@@ -60,6 +60,25 @@ dotnet build -c Release   # 本番ビルド（ロガー除去）
 dotnet test               # テスト実行
 ```
 
+## Git Workflow
+
+- 作業単位ごとにブランチを作成してから作業を開始すること
+- ブランチ作成は `gh` コマンドを使用する
+- ブランチ名は `feature/<短い説明>` または `fix/<短い説明>` 形式（英語）
+- 作業完了後は `gh pr create` でPRを作成する
+
+```bash
+# ブランチ作成 & チェックアウト
+gh repo set-default  # 初回のみ
+git switch -c feature/my-feature
+
+# 作業完了後
+git add <files>
+git commit -m "メッセージ"
+git push -u origin feature/my-feature
+gh pr create --title "タイトル" --body "説明"
+```
+
 ## Development Notes
 
 - このリポジトリはPhase 1（Recording & 回帰テスト生成）の実装が主目標
