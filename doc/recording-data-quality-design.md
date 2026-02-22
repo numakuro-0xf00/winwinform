@@ -473,3 +473,77 @@ wfth-correlate の出力に UIA カバレッジの統計を含める。
 | 差分保存（パッチ方式） | 将来 | 容量問題が顕在化してから |
 | コントラストエッジ検出 | 将来 | 画像認識ライブラリ選定後 |
 | 複数状態リファレンス | 将来 | 基本機能が安定してから |
+
+---
+
+## 5. パスワードフィールドのデータ保護
+
+### 5.1 問題
+
+Logger（`logger-architecture-design.md`）はパスワードフィールドの値をマスクするが、Recording パイプライン全体では以下の箇所にパスワードが残る可能性がある:
+
+| データソース | パスワードの残存箇所 | 対策の必要性 |
+|---|---|---|
+| アプリ内ロガー（Logger） | TextChanged イベントの old/new 値 | **対策済み**（PasswordDetector でマスク） |
+| wfth-record（キーボードイベント） | キー入力シーケンスの生データ | **要対策** |
+| wfth-correlate（統合ログ） | TextInput アクションの text フィールド | **要対策** |
+| スクリーンショット | パスワード入力欄の視覚的表示 | 将来検討 |
+
+### 5.2 wfth-correlate でのパスワードマスク
+
+wfth-correlate が統合ログを生成する際、以下の条件でパスワードフィールドへの入力テキストをマスクする:
+
+```
+判定条件:
+  1. アクションの target が UIA で特定されている
+  2. target の ControlType が "Edit"（TextBox）
+  3. 以下のいずれかを満たす:
+     a. アプリ内ロガーの ControlInfo で IsPasswordField = true
+     b. UIA の IsPassword プロパティが true
+     c. UIA の Name に "パスワード", "password", "暗証" 等のキーワードを含む
+
+マスク処理:
+  TextInput アクションの input.text を "***" に置換
+  対応するキーボード生イベント列も masked: true をマーク
+```
+
+出力例:
+
+```json
+{
+  "seq": 5,
+  "type": "TextInput",
+  "input": { "text": "***", "masked": true, "duration": 1.2 },
+  "target": {
+    "source": "UIA",
+    "automationId": "txtPassword",
+    "name": "パスワード",
+    "controlType": "Edit",
+    "isPassword": true
+  }
+}
+```
+
+### 5.3 スクリーンショットのパスワード領域ぼかし
+
+スクリーンショットにパスワード入力欄が映る場合、その領域をぼかす処理は**将来検討**とする。
+
+理由:
+- WinForms の TextBox は PasswordChar 設定時に `●●●` 表示となるため、通常はスクリーンショットに平文パスワードが映ることはない
+- PasswordChar 未設定でもビジネスロジック側でマスクしているケースがある
+- 画像処理のコストと実装複雑性に対して、リスクが限定的
+
+ただし、以下のケースではリスクがある:
+- カスタム描画のパスワードフィールド（PasswordChar が機能しない）
+- パスワード入力中の一時的な平文表示（「パスワードを表示」ボタン）
+
+これらは `wfth-correlate --mask-screenshots` オプションとして将来実装を検討する。
+
+### 5.4 実装優先度
+
+| 機能 | MVP段階 | 理由 |
+|------|---------|------|
+| wfth-correlate でのパスワードテキストマスク | **MVP D** | correlate の基本機能と同時 |
+| UIA IsPassword 判定 | **MVP D** | UIA プロパティで判定可能 |
+| アプリ内ロガー連携判定 | MVP D+ | IPC 連携が前提 |
+| スクリーンショットのパスワード領域ぼかし | 将来 | 画像処理実装が必要 |

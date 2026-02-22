@@ -50,7 +50,7 @@ WinFormsTestHarness/
 
 ## Key Design Decisions
 
-- アプリ内ロガーは `[Conditional("E2E_TEST")]` 属性で本番ビルドから完全除去される（ILレベルで呼び出しが消える）
+- アプリ内ロガーは `#if E2E_TEST` プリプロセッサディレクティブで制御。シンボル未定義ビルドではメソッド本体が空になり実行時コストゼロ。CIでは `dotnet build -c Release -p:E2ETestEnabled=true` でRelease最適化+ロガー有効が可能
 - ビルド構成: `dotnet build -c Release`（本番）vs `dotnet build -c E2ETest`（ロガー有効）
 - Recording EngineはSetWindowsHookExによるグローバルフックで入力をキャプチャし、対象ウィンドウのみをフィルタリング
 - スクリーンショットは差分検知（2%閾値）で無変化時スキップ

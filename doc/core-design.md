@@ -502,13 +502,15 @@ internal static class MouseHelper
 ```csharp
 public enum StrategyKind
 {
-    ByAutomationId,   // UIA AutomationId
-    ByName,           // UIA Name プロパティ
-    ByControlType,    // UIA ControlType
-    ByClassName,      // UIA ClassName
-    ByPath,           // UIA ツリーパス (例: "Window/Form/Panel/TextBox")
-    ByImage,          // テンプレートマッチング
-    ByPattern,        // OCR + 正規表現パターン
+    ByAutomationId,     // UIA AutomationId
+    ByName,             // UIA Name プロパティ
+    ByControlType,      // UIA ControlType
+    ByClassName,        // UIA ClassName
+    ByPath,             // UIA ツリーパス (例: "Window/Form/Panel/TextBox")
+    ByImage,            // テンプレートマッチング
+    ByPattern,          // OCR + 正規表現パターン
+    ByRelativePosition, // 他要素との相対位置で特定（将来拡張: AI判断）
+    ByAiVision,         // AI Vision APIによる要素特定（将来拡張）
 }
 
 public class ElementStrategy
@@ -518,6 +520,7 @@ public class ElementStrategy
     public string? ControlType { get; init; }       // ByName の絞り込み用
     public string? Description { get; init; }        // ログ/エラー表示用
     public Bitmap? ReferenceImage { get; init; }     // ByImage 用
+    public TimeSpan? PreferredTimeout { get; init; } // 個別タイムアウト（null時はデフォルト）
 }
 
 /// <summary>ストラテジー生成ヘルパー</summary>
@@ -654,6 +657,7 @@ internal class Element : IElement
     {
         var found = await ResolveAsync();
         await _executor.SetTextAsync(found, text);
+        _cached = null;  // テキスト入力でUI構造が変わる可能性があるためキャッシュ無効化
     }
 
     public async Task<string> GetTextAsync()
@@ -666,12 +670,14 @@ internal class Element : IElement
     {
         var found = await ResolveAsync();
         await _executor.SelectAsync(found, itemText);
+        _cached = null;  // 選択操作でUI構造が変わる可能性があるためキャッシュ無効化
     }
 
     public async Task SetCheckedAsync(bool isChecked)
     {
         var found = await ResolveAsync();
         await _executor.SetCheckedAsync(found, isChecked);
+        _cached = null;  // チェック状態変更でUI構造が変わる可能性があるためキャッシュ無効化
     }
 
     public async Task<bool> GetCheckedAsync()
@@ -1300,15 +1306,21 @@ public record StrategyFailure(ElementStrategy Strategy, string Reason);
 
 ```
 要素検索のリトライ戦略:
-  ストラテジーごとに割り当て時間内でポーリング（200ms間隔）
+  ストラテジーごとに個別タイムアウトでポーリング（200ms間隔）
   全ストラテジー合計でデフォルト10秒
 
-  例: 3つのストラテジーがある場合
-    ByAutomationId: 最大 ~3.3秒 ポーリング
-    ByName:         最大 ~3.3秒 ポーリング
-    ByImage:        最大 ~3.3秒 ポーリング
+  デフォルトタイムアウト（ストラテジー種別ごと）:
+    UIA系（ByAutomationId, ByName, ByControlType, ByClassName, ByPath）: 2秒
+    画像系（ByImage, ByPattern）: 5秒
+    AI系（ByRelativePosition, ByAiVision）: 10秒
 
-  ※ 前のストラテジーが即座に失敗すれば、残りの時間は後のストラテジーに配分
+  例: ByAutomationId + ByName + ByImage の3ストラテジー
+    ByAutomationId: 最大 2秒 ポーリング（通常 50ms で結果が返る）
+    ByName:         最大 2秒 ポーリング
+    ByImage:        最大 5秒 ポーリング（スクリーンショット撮影 + マッチングのため長め）
+
+  ※ 前のストラテジーが即座に失敗すれば、残りの時間は後のストラテジーに繰り越し
+  ※ ElementStrategy に PreferredTimeout プロパティを追加し、個別カスタマイズ可能にする
 
 操作のリトライ:
   操作自体はリトライしない（べき等性が保証できない）
@@ -1420,11 +1432,13 @@ src/WinFormsTestHarness.Core/
 
   <ItemGroup>
     <PackageReference Include="FlaUI.UIA3" Version="4.*" />
-    <PackageReference Include="NUnit" Version="4.*" />
+    <!-- NUnit は Core パッケージに含めない（テストランナー分離方針、11.2 参照） -->
     <ProjectReference Include="..\WinFormsTestHarness.Capture\WinFormsTestHarness.Capture.csproj" />
   </ItemGroup>
 </Project>
 ```
+
+> **Note**: `WinFormsTestBase`（NUnit 版テスト基底クラス）は Core に同梱するが、NUnit への PackageReference は Core パッケージに含めない。テストプロジェクト側で NUnit / xUnit / MSTest を個別に参照する設計とする（セクション11.2参照）。
 
 ---
 
@@ -1472,6 +1486,21 @@ NUnit をプライマリサポートとし、WinFormsTestBase は NUnit の属�
 - NUnit は [TestCaseSource] で仕様書のテストケースIDと紐付けしやすい
 - 基盤部分（AppInstance, HybridElementLocator 等）はランナー非依存
 
+**テストランナー分離方針**:
+
+Core パッケージ（`WinFormsTestHarness.Core`）の NuGet パッケージからは NUnit への PackageReference を除外する。`WinFormsTestBase` クラスは Core パッケージ内の `Testing/` ディレクトリに配置するが、NUnit 属性への依存はテストプロジェクト側の参照に委ねる。
+
+```
+テストプロジェクト側の csproj:
+  <PackageReference Include="NUnit" Version="4.*" />              ← テストランナー
+  <PackageReference Include="WinFormsTestHarness.Core" Version="..." /> ← Core（NUnit非依存）
+```
+
+これにより:
+- Core を NUnit なしで参照可能（ライブラリとしての利用）
+- 将来の xUnit / MSTest サポートが自然に追加可能
+- `WinFormsTestBase` の xUnit / MSTest 版は `WinFormsTestHarness.XUnit` / `WinFormsTestHarness.MSTest` パッケージとして分離可能
+
 ### 11.3 同期 vs 非同期
 
 全ての公開APIを `async Task` で統一。
@@ -1494,9 +1523,21 @@ MVP E では `NullImageMatcher`（常に null）を提供し、画像認識は�
 ### 11.5 要素キャッシュの有効期間
 
 Element は見つけた UIA 要素をキャッシュするが、以下のタイミングで無効化する:
-- クリック操作後（画面遷移の可能性）
+- **全状態変更操作の後**: ClickAsync, SetTextAsync, SelectAsync, SetCheckedAsync（いずれもUI構造が変わる可能性がある）
 - 明示的な再検索要求
 - キャッシュされた UIA 要素のプロパティ取得が例外を投げた場合
+
+SetTextAsync 後のキャッシュ無効化理由:
+- テキスト入力でオートコンプリートドロップダウンが出現する場合がある
+- バリデーション結果で関連フィールドの表示/非表示が切り替わる場合がある
+
+SelectAsync 後のキャッシュ無効化理由:
+- ComboBox 選択で子フォームの表示やUI構造の変化が発生する場合がある
+
+SetCheckedAsync 後のキャッシュ無効化理由:
+- チェック状態により関連フィールドの表示/非表示やEnabled状態が切り替わる場合がある
+
+パフォーマンスへの影響は軽微（UIA の FindFirst は通常 10-50ms）。
 
 ### 11.6 WaitForFormAsync のフォーム判定
 
