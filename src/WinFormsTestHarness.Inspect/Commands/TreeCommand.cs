@@ -1,4 +1,6 @@
 using System.CommandLine;
+using System.CommandLine.Invocation;
+using WinFormsTestHarness.Common.Cli;
 using WinFormsTestHarness.Inspect.Helpers;
 
 namespace WinFormsTestHarness.Inspect.Commands;
@@ -31,17 +33,24 @@ public static class TreeCommand
         command.AddOption(depthOption);
         command.AddOption(backendOption);
 
-        command.SetHandler(Execute, hwndOption, processOption, depthOption, backendOption);
+        command.SetHandler((InvocationContext ctx) =>
+        {
+            var hwnd = ctx.ParseResult.GetValueForOption(hwndOption);
+            var process = ctx.ParseResult.GetValueForOption(processOption);
+            var depth = ctx.ParseResult.GetValueForOption(depthOption);
+            var backend = ctx.ParseResult.GetValueForOption(backendOption)!;
+            ctx.ExitCode = Execute(hwnd, process, depth, backend);
+        });
 
         return command;
     }
 
-    private static void Execute(string? hwnd, string? process, int? depth, string backend)
+    private static int Execute(string? hwnd, string? process, int? depth, string backend)
     {
         if (string.IsNullOrEmpty(hwnd) && string.IsNullOrEmpty(process))
         {
             Console.Error.WriteLine("Error: --hwnd または --process のいずれかを指定してください。");
-            return;
+            return ExitCodes.ArgumentError;
         }
 
         try
@@ -50,10 +59,22 @@ public static class TreeCommand
             var handle = HwndHelper.Resolve(hwnd, process, inspector);
             var tree = inspector.GetTree(handle, depth);
             Console.Out.WriteLine(JsonHelper.Serialize(tree));
+            return ExitCodes.Success;
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("No window found"))
+        {
+            Console.Error.WriteLine($"Error: {ex.Message}");
+            return ExitCodes.TargetNotFound;
+        }
+        catch (ArgumentException ex)
+        {
+            Console.Error.WriteLine($"Error: {ex.Message}");
+            return ExitCodes.ArgumentError;
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Error: {ex.Message}");
+            return ExitCodes.RuntimeError;
         }
     }
 }

@@ -1,4 +1,6 @@
 using System.CommandLine;
+using System.CommandLine.Invocation;
+using WinFormsTestHarness.Common.Cli;
 using WinFormsTestHarness.Inspect.Helpers;
 
 namespace WinFormsTestHarness.Inspect.Commands;
@@ -16,12 +18,16 @@ public static class ListCommand
 
         command.AddOption(backendOption);
 
-        command.SetHandler(Execute, backendOption);
+        command.SetHandler((InvocationContext ctx) =>
+        {
+            var backend = ctx.ParseResult.GetValueForOption(backendOption)!;
+            ctx.ExitCode = Execute(backend);
+        });
 
         return command;
     }
 
-    private static void Execute(string backend)
+    private static int Execute(string backend)
     {
         try
         {
@@ -32,10 +38,18 @@ public static class ListCommand
             {
                 Console.Out.WriteLine(JsonHelper.Serialize(window));
             }
+
+            return ExitCodes.Success;
+        }
+        catch (ArgumentException ex)
+        {
+            Console.Error.WriteLine($"Error: {ex.Message}");
+            return ExitCodes.ArgumentError;
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Error: {ex.Message}");
+            return ExitCodes.RuntimeError;
         }
     }
 }

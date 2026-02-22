@@ -7,4 +7,8 @@
     <ToolCommandName>wfth-record</ToolCommandName>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\WinFormsTestHarness.Common\WinFormsTestHarness.Common.csproj" />
+  </ItemGroup>
+
 </Project>

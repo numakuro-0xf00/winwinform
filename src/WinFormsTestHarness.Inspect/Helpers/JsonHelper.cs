@@ -1,16 +1,13 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using CommonJson = WinFormsTestHarness.Common.Serialization.JsonHelper;
 
 namespace WinFormsTestHarness.Inspect.Helpers;
 
+/// <summary>
+/// Common.Serialization.JsonHelper に委譲。
+/// 後方互換のため薄いラッパーとして残す。
+/// </summary>
 public static class JsonHelper
 {
-    public static readonly JsonSerializerOptions Options = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
-
     public static string Serialize<T>(T value)
-        => JsonSerializer.Serialize(value, Options);
+        => CommonJson.Serialize(value);
 }

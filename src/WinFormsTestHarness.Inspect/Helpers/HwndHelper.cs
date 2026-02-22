@@ -1,18 +1,18 @@
 using WinFormsTestHarness.Inspect.Inspectors;
-using WinFormsTestHarness.Inspect.Models;
+using CommonHwnd = WinFormsTestHarness.Common.Windows.HwndHelper;
 
 namespace WinFormsTestHarness.Inspect.Helpers;
 
 public static class HwndHelper
 {
     /// <summary>
-    /// Resolves an IntPtr hwnd from either a hex string or a process name.
+    /// --hwnd または --process からウィンドウハンドルを解決する。
     /// </summary>
     public static IntPtr Resolve(string? hwndHex, string? processName, IUiaInspector inspector)
     {
         if (!string.IsNullOrEmpty(hwndHex))
         {
-            return ParseHwnd(hwndHex);
+            return CommonHwnd.ParseHwnd(hwndHex);
         }
 
         if (!string.IsNullOrEmpty(processName))
@@ -21,20 +21,6 @@ public static class HwndHelper
         }
 
         throw new InvalidOperationException("Either --hwnd or --process must be specified.");
-    }
-
-    public static IntPtr ParseHwnd(string hwndHex)
-    {
-        var hex = hwndHex.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
-            ? hwndHex[2..]
-            : hwndHex;
-
-        if (long.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out var value))
-        {
-            return new IntPtr(value);
-        }
-
-        throw new ArgumentException($"Invalid hwnd format: '{hwndHex}'. Expected hex string like '0x001A0F32'.");
     }
 
     public static IntPtr FindByProcess(string processName, IUiaInspector inspector)
@@ -50,6 +36,6 @@ public static class HwndHelper
                 $"Available: {string.Join(", ", windows.Select(w => w.Process).Distinct())}");
         }
 
-        return ParseHwnd(match.Hwnd);
+        return CommonHwnd.ParseHwnd(match.Hwnd);
     }
 }

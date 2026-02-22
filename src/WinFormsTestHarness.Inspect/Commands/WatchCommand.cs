@@ -1,4 +1,6 @@
 using System.CommandLine;
+using System.CommandLine.Invocation;
+using WinFormsTestHarness.Common.Cli;
 using WinFormsTestHarness.Inspect.Helpers;
 
 namespace WinFormsTestHarness.Inspect.Commands;
@@ -32,17 +34,24 @@ public static class WatchCommand
         command.AddOption(intervalOption);
         command.AddOption(backendOption);
 
-        command.SetHandler(Execute, hwndOption, processOption, intervalOption, backendOption);
+        command.SetHandler(async (InvocationContext ctx) =>
+        {
+            var hwnd = ctx.ParseResult.GetValueForOption(hwndOption);
+            var process = ctx.ParseResult.GetValueForOption(processOption);
+            var interval = ctx.ParseResult.GetValueForOption(intervalOption);
+            var backend = ctx.ParseResult.GetValueForOption(backendOption)!;
+            ctx.ExitCode = await ExecuteAsync(hwnd, process, interval, backend);
+        });
 
         return command;
     }
 
-    private static async Task Execute(string? hwnd, string? process, int interval, string backend)
+    private static async Task<int> ExecuteAsync(string? hwnd, string? process, int interval, string backend)
     {
         if (string.IsNullOrEmpty(hwnd) && string.IsNullOrEmpty(process))
         {
             Console.Error.WriteLine("Error: --hwnd または --process のいずれかを指定してください。");
-            return;
+            return ExitCodes.ArgumentError;
         }
 
         using var cts = new CancellationTokenSource();
@@ -84,14 +93,27 @@ public static class WatchCommand
                     await Task.Delay(interval, cts.Token);
                 }
             }
+
+            return ExitCodes.Success;
         }
         catch (OperationCanceledException)
         {
-            // Normal exit via Ctrl+C
+            return ExitCodes.Success;
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("No window found"))
+        {
+            Console.Error.WriteLine($"Error: {ex.Message}");
+            return ExitCodes.TargetNotFound;
+        }
+        catch (ArgumentException ex)
+        {
+            Console.Error.WriteLine($"Error: {ex.Message}");
+            return ExitCodes.ArgumentError;
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Error: {ex.Message}");
+            return ExitCodes.RuntimeError;
         }
     }
 }

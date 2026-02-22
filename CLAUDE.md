@@ -18,20 +18,24 @@ WinFormsTestHarness — WinForms E2E テスト自動化プラットフォーム�
 
 要素特定は `HybridElementLocator` が優先順位付きストラテジー（UIA AutomationId → UIA Name → 画像認識 → AI判断）をフォールバック実行する。
 
-## Planned Project Structure
+## Project Structure
 
 ```
 WinFormsTestHarness/
 ├── src/
+│   ├── WinFormsTestHarness.Common/     # 共通ライブラリ（NDJSON I/O, ExitCodes, JsonHelper等）
+│   ├── WinFormsTestHarness.Inspect/    # wfth-inspect — UIAツリー偵察CLI（実装済み）
+│   ├── WinFormsTestHarness.Record/     # wfth-record — 入力イベント記録（スタブ）
+│   ├── WinFormsTestHarness.Capture/    # wfth-capture — スクリーンショット撮影（スタブ）
+│   ├── WinFormsTestHarness.Aggregate/  # wfth-aggregate — 生イベント集約（スタブ）
+│   ├── WinFormsTestHarness.Correlate/  # wfth-correlate — 時間窓相関（スタブ）
 │   ├── WinFormsTestHarness.Core/       # テスト実行フレームワーク（ドライバー層 + 操作抽象化層）
-│   ├── WinFormsTestHarness.Logger/     # アプリ内ロガー NuGetパッケージ
-│   ├── WinFormsTestHarness.Recorder/   # Recording Engine（外部プロセス）
-│   └── WinFormsTestHarness.SpecParser/ # テスト仕様書パーサー
+│   └── WinFormsTestHarness.Logger/     # アプリ内ロガー NuGetパッケージ
 ├── tests/
 │   └── WinFormsTestHarness.Tests/
-└── samples/
-    ├── SampleApp/                      # テスト対象サンプルアプリ
-    └── SampleTests/                    # 生成テストコードのサンプル
+├── samples/
+│   └── SampleApp/                      # テスト対象サンプルアプリ
+└── demo/                               # パイプライン検証用デモデータ
 ```
 
 ## Tech Stack
