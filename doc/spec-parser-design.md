@@ -50,7 +50,7 @@ Excel ファイル (.xlsx)
 wfth-parse [options] <input-file>
 
 Input:
-  <input-file>          Excelファイルパス (.xlsx, .xls)
+  <input-file>          Excelファイルパス (.xlsx のみ。 .xls は事前変換)
 
 Options:
   -o, --output <path>   出力先（デフォルト: stdout）
@@ -793,34 +793,32 @@ Recording の action:
   → AIエージェントが Page Object 生成時にマッピング
 ```
 
-### 8.2 wfth-correlate への統合
+### 8.2 wfth-correlate への統合（将来）
 
 ```bash
-# Recording 時にテスト仕様書を指定
-wfth-correlate $SESSION/ \
-  --spec test-spec.json \
-  -o $SESSION/session.json
+# 将来実装時: Recording 時にテスト仕様書を指定
+wfth-aggregate < $SESSION/record.ndjson \
+  | wfth-correlate --uia $SESSION/uia.ndjson \
+                   --screenshots $SESSION/screenshots \
+                   --spec test-spec.json \
+  > $SESSION/session.ndjson
 ```
 
-wfth-correlate が `--spec` オプションで TestSpec JSON を受け取り、Recording のアクションとテスト仕様書のステップを時系列で突合する。
+`--spec` は現時点では未実装の将来機能。実装後は `wfth-correlate` が TestSpec JSON を受け取り、Recording のアクションとテスト仕様書のステップを時系列で突合する。
+モノリシック JSON が必要な場合は `jq -s` または将来の `wfth-session` で変換する。
 
 ```json
 {
-  "session": { ... },
-  "actions": [
-    {
-      "seq": 1,
-      "type": "Click",
-      "input": { ... },
-      "target": { ... },
-      "specStep": {
-        "testCaseId": "TC-001",
-        "stepSeq": 1,
-        "description": "メイン画面の「顧客検索」ボタンをクリック",
-        "matchConfidence": 0.9
-      }
-    }
-  ]
+  "seq": 1,
+  "type": "Click",
+  "input": { ... },
+  "target": { ... },
+  "specStep": {
+    "testCaseId": "TC-001",
+    "stepSeq": 1,
+    "description": "メイン画面の「顧客検索」ボタンをクリック",
+    "matchConfidence": 0.9
+  }
 }
 ```
 

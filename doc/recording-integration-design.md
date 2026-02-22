@@ -186,9 +186,34 @@ class AppLogCorrelator
 名前付きパイプ上のプロトコル。各メッセージは改行区切りのJSON（NDJSON）。
 
 ```
-パイプ名: WinFormsTestHarness_{pid}
+パイプ名: WinFormsTestHarness_{pid}_{sessionNonce}
   {pid} は Recording Engine のプロセスID
+  {sessionNonce} は Recording Engine 起動時に生成する128bit乱数（hex）
   → 複数セッション同時実行を許容
+```
+
+#### 接続保護（必須）
+
+```
+1. ACL 制限:
+   - NamedPipeServerStream 作成時に PipeSecurity を設定し、
+     同一ユーザー SID のみ接続許可
+   - Administrators / Everyone への広域許可はしない
+
+2. 初期ハンドシェイク:
+   - 接続直後に hello/challenge/response を実施
+   - sessionNonce と別に共有された sessionToken（起動時配布）を検証
+   - 検証失敗時は即切断し、securityイベントを記録
+
+3. 監査ログ:
+   - 認証失敗・ACL拒否・再接続を system イベントとして NDJSON 出力
+```
+
+```json
+{"ts":"...","type":"hello","pid":12345,"sessionNonce":"a1b2..."}
+{"ts":"...","type":"challenge","nonce":"9f10..."}
+{"ts":"...","type":"response","proof":"hmac-sha256(...)"}
+{"ts":"...","type":"system","action":"ipc_auth_failed","reason":"invalid_proof"}
 ```
 
 ```json
@@ -258,23 +283,14 @@ private string MaskValue(string value)
 
 ### 1.5 突合精度の評価指標
 
-wfth-correlate の出力に突合の品質メトリクスを含める。
+wfth-correlate の出力に突合の品質メトリクスを含める。  
+形式はモノリシック JSON ではなく、**NDJSON のメタ行**として出力する。
+メタ行の共通契約は `recording-cli-design.md` の「3.6 統合ログ出力形式」を参照。
 
 ```json
-{
-  "session": { ... },
-  "actions": [ ... ],
-  "correlation": {
-    "totalActions": 25,
-    "withAppLog": 20,
-    "withoutAppLog": 5,
-    "avgClockOffset": 2.3,
-    "maxClockOffset": 8.1,
-    "unit": "ms",
-    "ipcStatus": "connected",
-    "ipcDisconnections": 0
-  }
-}
+{"seq":1,"type":"Click", ...}
+{"seq":2,"type":"TextInput", ...}
+{"type":"summary","summaryType":"correlation","metrics":{"totalActions":25,"withAppLog":20,"withoutAppLog":5,"avgClockOffset":2.3,"maxClockOffset":8.1,"unit":"ms","ipcStatus":"connected","ipcDisconnections":0}}
 ```
 
 ---

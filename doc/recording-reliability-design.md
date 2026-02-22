@@ -21,9 +21,9 @@
   │                                    │
   ├─ イベント受信                      │
   ├─ IsTargetWindow() 判定（高速）     │
-  ├─ ConcurrentQueue.Enqueue()        │
+  ├─ Channel.Writer.TryWrite()        │
   ├─ CallNextHookEx() return ←────── │ 10μs以内
-  │                                    ├─ Dequeue()
+  │                                    ├─ ReadAsync()
   │                                    ├─ JSON シリアライズ
   │                                    └─ stdout 書き出し
 ```
@@ -32,47 +32,76 @@
 - コールバック内で I/O（ファイル書き込み、Console出力）を行わない
 - コールバック内で例外を発生させない（全体を try-catch で囲む）
 - コールバック内でロックを取得しない
-- `ConcurrentQueue<T>` でロックフリーにイベントを受け渡す
+- `Channel<T>`（有界）でロックフリーに近い形で受け渡す
+
+#### A-2. 有界キューと劣化モード（メモリ保護）
+
+無制限キューは I/O 劣化時にメモリ膨張を起こすため禁止する。
+
+```
+基本設定:
+  - BoundedChannel(capacity: 4096)
+  - FullMode: Wait は使わない（コールバックをブロックしない）
+
+劣化モード:
+  - キュー使用率 >= 80%: lossyイベント（Move/Wheel）を間引き・圧縮
+  - キュー使用率 >= 95%: lossyイベントを優先破棄し、criticalイベント（Down/Up/Key/Window）を優先保持
+  - 破棄発生時は system イベントを出力して欠損を可視化
+```
+
+```json
+{"ts":"...","type":"system","action":"queue_pressure","usage":0.86,"mode":"coalesce_lossy"}
+{"ts":"...","type":"system","action":"queue_overflow","dropped":{"mouse_move":124,"wheel":8}}
+```
 
 #### B. フック生存監視（検知）
 
 定期的にフックが有効かどうかを確認する。低レベルフックにはフック状態を直接問い合わせるAPIがないため、間接的に検知する。
+**ユーザー無操作時はコールバックが来ないのが正常**であり、誤検知を避ける。
 
 ```
-方式: 自己テストイベント
+方式: 入力活動 + 自己テストパルス
 
 [Watchdog Thread — 3秒間隔]
   1. 現在のフックハンドルが IntPtr.Zero でないことを確認
-  2. 最後にフックコールバックが呼ばれた時刻を確認
-  3. 対象ウィンドウがフォアグラウンドなのに5秒以上コールバック未着
-     → フック消失と判断
-  4. → フック再設定を試行
+  2. OS全体の最終入力時刻（GetLastInputInfo）を取得
+  3. 直近5秒に入力なし → Idle（正常）として再設定しない
+  4. 入力あり かつ 2秒以上コールバック未着 → 自己テストパルスを送信
+  5. パルス後もコールバック未着 → フック消失と判断
+  6. → フック再設定を試行
 ```
 
 ```csharp
 class HookHealthMonitor
 {
-    private volatile long _lastCallbackTick;   // Interlocked で更新
-    private readonly IntPtr _targetHwnd;
+    private volatile long _lastCallbackTick; // Interlockedで更新
+    private readonly IProbeInput _probeInput;
 
-    // コールバック内で呼ぶ（軽量）
     public void RecordActivity()
     {
-        Interlocked.Exchange(ref _lastCallbackTick,
-            Environment.TickCount64);
+        Interlocked.Exchange(ref _lastCallbackTick, Environment.TickCount64);
     }
 
-    // Watchdog スレッドで呼ぶ
     public HookStatus Check()
     {
-        var elapsed = Environment.TickCount64 -
-            Interlocked.Read(ref _lastCallbackTick);
+        var now = Environment.TickCount64;
+        var lastCallback = Interlocked.Read(ref _lastCallbackTick);
+        var lastInput = NativeMethods.GetLastInputTick64();
 
-        // 対象ウィンドウがフォアグラウンドかどうか
-        var isForeground = NativeMethods.GetForegroundWindow() == _targetHwnd
-            || IsOwnedByTarget(NativeMethods.GetForegroundWindow());
+        var inputElapsedMs = now - lastInput;
+        var callbackElapsedMs = now - lastCallback;
 
-        if (isForeground && elapsed > 5000)
+        if (inputElapsedMs > 5000)
+            return HookStatus.AliveIdle; // ユーザー無操作
+
+        if (callbackElapsedMs <= 2000)
+            return HookStatus.Alive;
+
+        // 誤検知を避けるため、自己テスト入力を送って最終確認
+        _probeInput.TrySendPulse();
+        Thread.Sleep(150);
+
+        if (Environment.TickCount64 - Interlocked.Read(ref _lastCallbackTick) > 2000)
             return HookStatus.PossiblyDead;
 
         return HookStatus.Alive;
@@ -102,6 +131,11 @@ class HookHealthMonitor
   - CriticalFinalizerObject を継承したフッククラスで
     GC時のファイナライザでも解除を試行
 ```
+
+#### E. 劣化情報の下流伝搬
+
+`queue_overflow` や `hook_lost` は `wfth-correlate` で `SystemGap` として統合ログへ反映する。
+これにより AI 生成時に「欠損区間がある」ことを判断可能にする。
 
 ### 1.3 イベント欠損への対応
 
@@ -539,10 +573,10 @@ wfth-correlate が統合ログを出力する際、物理座標と論理座標�
 
 | 対策 | 優先度 | 理由 |
 |------|--------|------|
-| コールバック高速化（キュー方式） | **必須** | フック安定性の基盤 |
+| コールバック高速化 + 有界キュー運用 | **必須** | フック安定性とメモリ保護の基盤 |
 | WindowTracker（マルチウィンドウ追跡） | **必須** | モーダルダイアログが使えないと実用にならない |
 | DPI Awareness マニフェスト | **必須** | 座標ズレは致命的 |
-| フック生存監視 + 再設定 | 高 | サイレント消失は発見が困難 |
+| 誤検知抑制付きフック生存監視 + 再設定 | 高 | サイレント消失は発見が困難 |
 | アプリハング検知 | 高 | 長時間記録で遭遇する |
 | モニタ構成記録 | 中 | マルチモニタ環境でなければ不要 |
 | 論理座標変換 | 中 | correlate時に後処理可能 |
