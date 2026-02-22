@@ -377,7 +377,21 @@ UNIX思想レビューに基づき、全ツールに適用する共通規約。
 - **stdout**: データ出力のみ（NDJSON）。パイプライン合成可能
 - **stderr**: エラー・警告・診断情報。`--quiet` で警告・情報を抑制、エラーは常に出力
 
-### 5.4 共通ライブラリ
+### 5.4 NDJSON 出力のバッファリング規約
+
+全 CLI ツールの NDJSON 出力は**行バッファモード**を使用する。
+
+```csharp
+// Program.cs の冒頭で設定
+Console.Out.AutoFlush = true;
+```
+
+理由:
+- `wfth-correlate` がタイムスタンプでストリームをマージする際、書き込みバッファリングのタイミングによりファイル上の行順序がタイムスタンプ順と異なる可能性がある
+- 行バッファモードにより、1行（1イベント）の書き込み完了が即座にフラッシュされ、パイプライン合成時の順序保証を強化する
+- correlate 側のタイムスタンプソートで最終的な順序は保証されるが、入力データの前提条件として行バッファを規約化する
+
+### 5.5 共通ライブラリ
 
 `WinFormsTestHarness.Common` — 詳細は `common-library-design.md` を参照。
 
@@ -391,6 +405,41 @@ UNIX思想レビューに基づき、全ツールに適用する共通規約。
 - 高DPI / マルチモニタ環境での座標正規化 → recording-reliability-design.md で設計済み
 - セッションディレクトリの管理（一覧、削除、アーカイブ）
 - CIヘッドレス環境での実行可能性 → recording-integration-design.md で設計済み
+
+### `wfth-session` オーケストレーターCLI の検討
+
+現在の Recording セッションでは `wfth-record` + `wfth-inspect` の2プロセス並列起動をユーザーがシェルスクリプトで手動管理する設計である。以下の課題を解消するため、`wfth-session` オーケストレーターCLI の導入を検討する:
+
+- **プロセス間のシグナル伝搬**: 一方がクラッシュした場合の検知と全停止
+- **セッションディレクトリの自動管理**: 作成・命名・後処理の自動化
+- **初回ユーザーの敷居低減**: 1コマンドでRecordingセッション開始
+
+想定インターフェース:
+```bash
+wfth-session start --process SampleApp --out-dir ./sessions
+# 内部で wfth-record + wfth-inspect を子プロセスとして起動・監視
+# Ctrl+C で一括停止 → 自動で wfth-aggregate | wfth-correlate を実行
+```
+
+シェルスクリプトのパイプライン操作も引き続きサポートし、後方互換性を保つ。MVP 後の対応で構わないが、設計の TODO として記録する。
+
+### グローバルフックとEDR/セキュリティソフトの干渉リスク
+
+`WH_MOUSE_LL` / `WH_KEYBOARD_LL` は低レベルグローバルフックであり、エンタープライズ環境のEDR（Endpoint Detection and Response）やセキュリティソフトがブロックする可能性がある。WinForms レガシーアプリが多い「現場」で遭遇する可能性が高いリスクとして認識しておく。
+
+対策候補:
+- フック設定失敗時のエラーメッセージに「セキュリティソフトの除外設定」を案内
+- フックの代替手段（UI Automation イベントベースの入力監視）の将来検討
+- 導入ガイドにEDR除外設定の手順を記載
+
+### System.CommandLine のバージョンリスク
+
+全 CLI ツールが `System.CommandLine 2.0.0-beta4.22272.1`（2022年のベータ版）を使用している。GA リリース時に API が変更される可能性がある。
+
+対策:
+- System.CommandLine の GA リリース状況を定期的に確認
+- 代替 CLI ライブラリ（Cocona、Spectre.Console.Cli 等）も選択肢として記録
+- ベータ版から GA 版へのマイグレーションコストが大きい場合はライブラリ切り替えも検討
 
 ### 関連設計ドキュメント
 - `capture-design.md` — スクリーンショットキャプチャ詳細設計（共有ライブラリ + CLIラッパー）

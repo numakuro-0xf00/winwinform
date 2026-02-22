@@ -573,6 +573,48 @@ internal sealed class ControlWatcher
 
 `parent.ControlAdded` イベントをフックし、実行時に追加されるコントロールも自動監視する。
 
+#### コントロール削除時のハンドラ解除
+
+`parent.ControlRemoved` イベントをフックし、削除されたコントロールのイベントハンドラを解除する。これにより、長時間稼働するアプリでの**メモリリークを防止**する。
+
+```csharp
+parent.ControlRemoved += (s, e) =>
+{
+    UnwatchControl(e.Control);
+    if (e.Control.HasChildren)
+        UnwatchRecursive(e.Control);
+};
+```
+
+```csharp
+private void UnwatchControl(Control control)
+{
+    var hashCode = control.GetHashCode();
+    if (!_watchedControlIds.Remove(hashCode))
+        return;  // 監視していないコントロールは無視
+
+    // 登録済みハンドラの解除
+    // ※ 匿名ラムダではなく、ControlEventHandlers ディクショナリに保持したデリゲートを使用
+    if (_eventHandlers.TryGetValue(hashCode, out var handlers))
+    {
+        foreach (var (eventName, handler) in handlers)
+        {
+            switch (eventName)
+            {
+                case "Click": control.Click -= handler; break;
+                case "TextChanged": control.TextChanged -= handler; break;
+                case "VisibleChanged": control.VisibleChanged -= handler; break;
+                case "EnabledChanged": control.EnabledChanged -= handler; break;
+                // コントロール固有イベントも同様に解除
+            }
+        }
+        _eventHandlers.Remove(hashCode);
+    }
+}
+```
+
+**設計上の注意**: `WatchControl` で登録するイベントハンドラは匿名ラムダではなく、`_eventHandlers` ディクショナリに保持する。匿名ラムダでは `-=` による解除ができないため。
+
 #### 名前なしコントロールへの対応
 
 `control.Name` が空の場合、`_{TypeName}_{HashCode:X8}` 形式のフォールバック名を生成する（例: `_Button_0A3F5B2C`）。セッション内では安定した識別子となる。
