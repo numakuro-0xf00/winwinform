@@ -922,14 +922,15 @@ AIエージェントへの入力となる統合ログの形式。**標準は NDJ
 - [x] 対象アプリが応答なし（ハング）になった場合の挙動 → `recording-reliability-design.md`
 - [x] マルチウィンドウ・モーダルダイアログの追跡 → `recording-reliability-design.md`
 - [x] 高DPI環境や複数モニタでの座標ズレ → `recording-reliability-design.md`
-- [ ] 開始・停止・一時停止のワークフロー設計（開始・停止は `recording-cli-design.md` で設計済み、一時停止は未設計）
+- [x] 開始・停止・一時停止のワークフロー設計 → `session-workflow-design.md`
 - [ ] テスト仕様書のステップとRecordingの紐付けタイミング（概念設計は `spec-parser-design.md` にあるが、`--spec` 統合は将来機能）
-- [ ] 手動テスターが使うUI（Recording Controller）の設計
+- [x] 手動テスターが使うUI（Recording Controller）の設計 → `session-workflow-design.md`
 - [x] ノイズの除去（意図しないクリック、操作ミスの扱い） → `recording-data-quality-design.md`
 - [x] スクリーンショットの保存戦略（容量と解像度のバランス） → `capture-design.md`, `recording-data-quality-design.md`
 - [x] UIAで取れない要素の検出と画像認識用リファレンス画像の自動抽出 → `recording-data-quality-design.md`
 - [x] アプリ内ロガーとの時刻同期・イベント突合の精度 → `recording-integration-design.md`
 - [x] CIでのヘッドレス実行の可能性 → `recording-integration-design.md`
+- [x] 統合ログスキーマのバージョニング方針（後方互換ルール） → `schema-versioning-design.md`
 
 ### テスト仕様書パーサー
 

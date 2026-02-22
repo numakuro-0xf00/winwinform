@@ -415,28 +415,15 @@ Console.Out.AutoFlush = true;
 ## 6. 今後の設計課題
 
 ### 全体
-- 各ツールの終了シグナル伝搬（1つ停止したら全停止するか）
+- 各ツールの終了シグナル伝搬（1つ停止したら全停止するか） → session-workflow-design.md で設計済み
 - エラー発生時のリカバリ（入力フックのクリーンアップ等） → recording-reliability-design.md で設計済み
 - 高DPI / マルチモニタ環境での座標正規化 → recording-reliability-design.md で設計済み
-- セッションディレクトリの管理（一覧、削除、アーカイブ）
+- セッションディレクトリの管理（一覧、削除、アーカイブ） → session-workflow-design.md で設計済み（自動生成・命名規則）
 - CIヘッドレス環境での実行可能性 → recording-integration-design.md で設計済み
 
-### `wfth-session` オーケストレーターCLI の検討
+### `wfth-session` オーケストレーターCLI → `session-workflow-design.md` で設計済み
 
-現在の Recording セッションでは `wfth-record` + `wfth-inspect` の2プロセス並列起動をユーザーがシェルスクリプトで手動管理する設計である。以下の課題を解消するため、`wfth-session` オーケストレーターCLI の導入を検討する:
-
-- **プロセス間のシグナル伝搬**: 一方がクラッシュした場合の検知と全停止
-- **セッションディレクトリの自動管理**: 作成・命名・後処理の自動化
-- **初回ユーザーの敷居低減**: 1コマンドでRecordingセッション開始
-
-想定インターフェース:
-```bash
-wfth-session start --process SampleApp --out-dir ./sessions
-# 内部で wfth-record + wfth-inspect を子プロセスとして起動・監視
-# Ctrl+C で一括停止 → 自動で wfth-aggregate | wfth-correlate を実行
-```
-
-シェルスクリプトのパイプライン操作も引き続きサポートし、後方互換性を保つ。MVP 後の対応で構わないが、設計の TODO として記録する。
+セッションのライフサイクル制御（開始・停止・一時停止）、子プロセスオーケストレーション、制御パイプ IPC、自動後処理、トレイアイコン UI の詳細設計は `session-workflow-design.md` を参照。
 
 ### グローバルフックとEDR/セキュリティソフトの干渉リスク
 
