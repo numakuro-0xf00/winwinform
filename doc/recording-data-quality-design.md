@@ -258,8 +258,8 @@ Target:
   --hwnd <handle>        ウィンドウハンドル
 
 Trigger:
-  --watch <path>         入力イベントNDJSONファイルを監視してトリガー
-  --stdin-trigger        stdin からのイベント行でトリガー
+  --watch-file <path>    入力イベントNDJSONファイルを監視してトリガー
+  --watch-stdin          stdin からのイベント行でトリガー
   --interval <ms>        定期撮影（デフォルト: 無効）
 
 Capture:
@@ -436,23 +436,12 @@ public class ChartFormPage : FormPage
 ### 3.8 セッションサマリーでのUIA カバレッジレポート
 
 wfth-correlate の出力に UIA カバレッジの統計を含める。
+形式は NDJSON のメタ行とする（共通契約は `recording-cli-design.md` の「3.6 統合ログ出力形式」を参照）。
 
 ```json
-{
-  "session": { ... },
-  "actions": [ ... ],
-  "coverage": {
-    "totalActions": 25,
-    "uiaResolved": 22,
-    "uiaFallback": 3,
-    "fallbackBreakdown": {
-      "uia_ambiguous": 2,
-      "uia_empty": 1
-    },
-    "referenceImagesGenerated": 3,
-    "coveragePercent": 88.0
-  }
-}
+{"seq":1,"type":"Click", ...}
+{"seq":2,"type":"TextInput", ...}
+{"type":"summary","summaryType":"coverage","metrics":{"totalActions":25,"uiaResolved":22,"uiaFallback":3,"fallbackBreakdown":{"uia_ambiguous":2,"uia_empty":1},"referenceImagesGenerated":3,"coveragePercent":88.0}}
 ```
 
 テスト自動化の信頼性を事前に把握でき、UIA対応が必要な箇所を特定できる。

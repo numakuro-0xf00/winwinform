@@ -289,7 +289,7 @@ wfth-record --process SampleApp --capture --capture-level 2
 ```bash
 # 変更前（3プロセス）:
 wfth-record  --process SampleApp               > $SESSION/input.ndjson &
-wfth-capture --process SampleApp --watch ...    > $SESSION/capture.ndjson &
+wfth-capture --process SampleApp --watch-file ... > $SESSION/capture.ndjson &
 wfth-inspect watch --process SampleApp          > $SESSION/uia.ndjson &
 
 # 変更後（2プロセス）:
@@ -297,12 +297,14 @@ wfth-record  --process SampleApp --capture      > $SESSION/record.ndjson &
 wfth-inspect watch --process SampleApp          > $SESSION/uia.ndjson &
 
 # correlate:
-wfth-correlate --record $SESSION/record.ndjson \
-               --uia $SESSION/uia.ndjson \
-               -o $SESSION/session.json
+wfth-aggregate < $SESSION/record.ndjson \
+  | wfth-correlate --uia $SESSION/uia.ndjson \
+                   --screenshots $SESSION/screenshots \
+  > $SESSION/session.ndjson
 ```
 
-入力イベントとスクリーンショットが1つのNDJSONに統合されるため、correlate の入力は `--input` + `--capture` の2つから `--record` の1つに変わる。
+入力イベントとスクリーンショットは `record.ndjson` に統合されるが、`wfth-correlate` は `wfth-aggregate` の出力（stdin）を正規入力とする。
+スクリーンショットファイルは `--screenshots` で明示的に渡す。
 
 ---
 
@@ -405,21 +407,18 @@ wfth-capture --process SampleApp --watch-stdin < events.ndjson > captures.ndjson
 </Project>
 ```
 
-### 5.3 wfth-correlate の入力変更
+### 5.3 wfth-correlate の入力契約変更
 
 ```
 変更前:
-  --input <path>     入力イベントNDJSON
-  --capture <path>   スクリーンショットNDJSON（別ファイル）
-  --uia <path>       UIAツリー変化NDJSON
+  wfth-correlate --input <path> --capture <path> --uia <path>
 
 変更後:
-  --record <path>    wfth-record出力NDJSON（入力イベント+スクリーンショット混在）
-  --uia <path>       UIAツリー変化NDJSON
-  --app-log <path>   アプリ内ロガーNDJSON（将来）
+  wfth-aggregate < record.ndjson \
+    | wfth-correlate --uia <path> --screenshots <dir>
 
-  correlate は record NDJSON 内の type フィールドで
-  input系（mouse, key, window）と screenshot を分類する
+  correlate は stdin から受けた集約済みアクションを基準に
+  UIA変化・スクリーンショットを時間窓で紐付ける
 ```
 
 ### 5.4 セッションディレクトリ規約の更新
@@ -438,7 +437,7 @@ wfth-capture --process SampleApp --watch-stdin < events.ndjson > captures.ndjson
   ├── record.ndjson     ← 入力イベント + スクリーンショットメタデータ
   ├── uia.ndjson        ← UIAツリー変化
   ├── screenshots/      ← PNG ファイル
-  └── session.json      ← 統合ログ
+  └── session.ndjson    ← 統合ログ（NDJSON）
 ```
 
 ---

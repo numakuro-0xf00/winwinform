@@ -19,7 +19,7 @@ UNIX思想レビューにおいて、`wfth-correlate` が「一つのことを�
 
 ```
 wfth-aggregate  — 生イベント → 集約アクション（Click, TextInput, DragAndDrop）
-wfth-correlate  — 時間窓相関のみ（UIA変化・スクリーンショット紐付け）
+wfth-correlate  — 時間窓相関を中核とする後処理（UIA変化・スクリーンショット紐付け + ノイズ分類）
 wfth-session    — NDJSON → モノリシック session.json 変換（将来）
 ```
 
@@ -48,6 +48,7 @@ wfth-aggregate < record.ndjson | jq 'select(.type == "Click")'
 - `RightDown` + `RightUp` → `RightClick`
 - 連続キー入力（`--text-timeout` で区切り）→ `TextInput`
 - 特殊キー（Enter, Tab, Escape等）→ `SpecialKey`（集約中断）
+- ノイズ分類は行わない（`wfth-correlate` が担当）
 
 ### 3.2 CLIインターフェース
 
@@ -61,7 +62,6 @@ Options:
   --text-timeout <ms>       キー入力集約タイムアウト（デフォルト: 500）
   --click-timeout <ms>      Click判定タイムアウト（デフォルト: 300）
   --dblclick-timeout <ms>   DoubleClick判定タイムアウト（デフォルト: 500）
-  --no-denoise              ノイズ分類を無効化（全イベントを透過）
   --debug                   診断情報を stderr に出力
   --quiet                   stderr 出力を抑制
 ```
@@ -81,15 +81,7 @@ Options:
 {"ts":"...","type":"TextInput","text":"T","startTs":"...","endTs":"..."}
 ```
 
-### 3.4 ノイズ分類
-
-デフォルトで以下をノイズとして分類（`noise` フィールド付加）:
-- `empty_click`: UI変化を伴わないクリック
-- `window_move`: ウィンドウ移動操作
-
-`--no-denoise` でノイズ分類を無効化し、全イベントを透過する。
-
-### 3.5 アーキテクチャ
+### 3.4 アーキテクチャ
 
 ```
 Program.cs (System.CommandLine)
@@ -97,8 +89,6 @@ Program.cs (System.CommandLine)
   │   ├── MouseClickAggregator.cs    — Down+Up → Click/DoubleClick/Drag
   │   ├── KeySequenceAggregator.cs   — 連続キー → TextInput
   │   └── ActionBuilder.cs           — 集約済みアクション生成
-  ├── Denoise/
-  │   └── NoiseClassifier.cs         — ノイズ分類（オプション）
   └── Models/
       └── AggregatedAction.cs        — 集約済みアクションDTO
 ```
@@ -107,10 +97,12 @@ Program.cs (System.CommandLine)
 
 ### 4.1 新しい責務
 
-時間窓ベースの **イベント相関のみ** を行う:
+時間窓ベースの **イベント相関を中核** に行う:
 - 各アクションに対して時間窓（`--window`）内の UIA 変化を紐付け
 - スクリーンショット（before/after）を紐付け
 - アプリ内ログを紐付け
+- ノイズ分類（`empty_click`, `window_move`, `duplicate_click` など）を実施
+- （将来）`--spec` でテスト仕様ステップとの突合を実施
 
 ### 4.2 CLIインターフェース
 
@@ -125,10 +117,14 @@ Options:
   --app-log <path>          アプリ内ロガー NDJSON
   --screenshots <dir>       スクリーンショットディレクトリ
   --window <ms>             相関時間窓（デフォルト: 2000）
+  --include-noise           ノイズ判定された操作も出力
+  --noise-threshold <n>     confidence >= n をノイズと判定（デフォルト: 0.7）
   --explain                 各相関の判定根拠を注釈
   --debug                   診断情報を stderr に出力
   --quiet                   stderr 出力を抑制
 ```
+
+注: `--spec` は将来機能として `wfth-correlate` 側に追加する（現時点では未実装）。
 
 ### 4.3 入出力
 
@@ -209,5 +205,5 @@ wfth-correlate ... | wfth-session --process SampleApp > session.json
 | 入力集約 | correlate 内部 | aggregate が担当 |
 | デフォルト出力 | モノリシック JSON | NDJSON |
 | ディレクトリ規約 | 暗黙検出 | 明示引数 |
-| ノイズ分類 | correlate 内部 | aggregate の `--no-denoise` で制御 |
+| ノイズ分類 | correlate 内部 | correlate が担当（`--include-noise` で制御） |
 | 判定根拠 | 不可視 | `--explain` モード |

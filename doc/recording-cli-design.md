@@ -173,7 +173,6 @@ Input:
 Options:
   --text-timeout <ms>       キー入力集約タイムアウト（デフォルト: 500）
   --click-timeout <ms>      Click判定タイムアウト（デフォルト: 300）
-  --no-denoise              ノイズ分類を無効化
   --debug                   診断情報を stderr に出力
   --quiet                   stderr 出力を抑制
 ```
@@ -191,6 +190,8 @@ Options:
   --app-log <path>          アプリ内ロガー NDJSON
   --screenshots <dir>       スクリーンショットディレクトリ
   --window <ms>             相関時間窓（デフォルト: 2000）
+  --include-noise           ノイズ判定された操作も出力
+  --noise-threshold <n>     confidence >= n をノイズと判定（デフォルト: 0.7）
   --explain                 各相関の判定根拠を注釈
   --debug                   診断情報を stderr に出力
   --quiet                   stderr 出力を抑制
@@ -236,13 +237,27 @@ key(down, T) + key(down, T+50) + key(down, T+100) + [500ms無入力]
 
 ### 3.6 統合ログ出力形式（wfth-correlate 出力）
 
-NDJSON形式で1行1アクション:
+NDJSON形式で1行1レコード（通常はアクション）:
 
 ```json
 {"seq":1,"ts":"2026-02-22T14:30:05.123Z","type":"Click","input":{"button":"Left","sx":450,"sy":320,"rx":230,"ry":180},"target":{"source":"UIA","automationId":"btnSearch","name":"検索","controlType":"Button","rect":{"x":420,"y":310,"w":80,"h":30}},"screenshots":{"before":"screenshots/0001_before.png","after":"screenshots/0001_after.png"},"uiaDiff":{"added":[{"automationId":"","name":"検索","controlType":"Window"}]}}
 {"seq":2,"ts":"2026-02-22T14:30:08.456Z","type":"TextInput","input":{"text":"田中","duration":0.3},"target":{"source":"UIA","automationId":"txtSearchCondition","name":"検索条件","controlType":"Edit"},"screenshots":{"after":"screenshots/0002_after.png"}}
 {"seq":3,"ts":"2026-02-22T14:30:10.789Z","type":"SpecialKey","input":{"key":"Enter"},"target":{"source":"UIA","automationId":"txtSearchCondition","controlType":"Edit"},"screenshots":{"before":"screenshots/0003_before.png","after":"screenshots/0003_after.png"},"uiaDiff":{"changed":[{"automationId":"dgvResults","property":"RowCount","from":0,"to":1}]}}
 ```
+
+セッション末尾の集計情報は NDJSON メタ行で出力する:
+
+```json
+{"type":"summary","summaryType":"correlation","metrics":{"totalActions":25,"withAppLog":20,"withoutAppLog":5}}
+{"type":"summary","summaryType":"coverage","metrics":{"totalActions":25,"uiaResolved":22,"uiaFallback":3}}
+```
+
+`summary` メタ行の契約（正規定義）:
+- `type` は固定で `"summary"`
+- `summaryType` は `"correlation"` または `"coverage"`（将来拡張可）
+- `metrics` は `summaryType` ごとのオブジェクト（未知キーは将来拡張として許容）
+- 出力タイミングは通常アクション列の**末尾**
+- 下流フィルタは `select(.type != "summary")` で通常アクションのみ抽出可能
 
 ### 3.7 アーキテクチャ
 
@@ -254,8 +269,6 @@ Program.cs (System.CommandLine)
   │   ├── MouseClickAggregator.cs    — Down+Up → Click/DoubleClick/Drag
   │   ├── KeySequenceAggregator.cs   — 連続キー → TextInput
   │   └── ActionBuilder.cs           — 集約済みアクション生成
-  ├── Denoise/
-  │   └── NoiseClassifier.cs         — ノイズ分類（オプション）
   └── Models/
       └── AggregatedAction.cs        — 集約済みアクションDTO
 ```
@@ -346,7 +359,9 @@ jq -s 'sort_by(.ts)' record.ndjson uia.ndjson
 wfth-aggregate < record.ndjson | jq 'select(.type == "Click")'
 
 # ノイズ除去済みのみ
-wfth-aggregate < record.ndjson | jq 'select(.noise == null)'
+wfth-aggregate < record.ndjson \
+  | wfth-correlate --uia uia.ndjson \
+  | jq 'select(.type != "summary" and .noise == null)'
 ```
 
 ---

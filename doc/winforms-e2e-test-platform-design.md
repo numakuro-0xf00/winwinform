@@ -1,5 +1,7 @@
 # WinForms E2E テスト自動化プラットフォーム — 設計ドキュメント
 
+> 更新注記（2026-02-22）: Recording パイプラインは `wfth-aggregate` + `wfth-correlate` 分割を正とする。
+
 ## 1. プロジェクト概要
 
 ### 背景と課題
@@ -36,33 +38,27 @@ Phase 2: 仕様書駆動テスト生成（将来構想）
 テスト仕様書(Excel/Word等)
      │
      ▼
-┌──────────┐    ┌─────────────────────────┐
-│ 仕様書    │    │   Recording Engine       │
-│ パーサー  │    │                           │
-│          │    │  ┌─────────┐ ┌─────────┐ │
-└────┬─────┘    │  │ 操作     │ │ アプリ内 │ │
-     │          │  │ キャプチャ│ │ ロガー   │ │
-     │          │  └────┬────┘ └────┬────┘ │
-     │          └───────┼───────────┼──────┘
-     │                  │           │
-     ▼                  ▼           ▼
-┌──────────────────────────────────────────┐
-│        統合ログストア                      │
-│  操作ログ + スクリーンショット + 内部状態   │
-│  + テスト仕様のステップ情報                │
-└──────────────────┬───────────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────────┐
-│     AI エージェント (コード生成)            │
-│  ログ + 仕様書 → テストスクリプト生成      │
-└──────────────────┬───────────────────────┘
-                   │
-                   ▼
-┌──────────────────────────────────────────┐
-│     回帰テストスイート                     │
-│  UI Automation + 画像認識 ハイブリッド実行  │
-└──────────────────────────────────────────┘
+┌──────────┐
+│ wfth-parse│───→ test-spec.json
+└──────────┘
+
+wfth-record --capture ──→ record.ndjson
+wfth-inspect watch  ───→ uia.ndjson
+アプリ内ロガー(IPC)  ──→ app-log.ndjson
+           │
+           ▼
+wfth-aggregate < record.ndjson
+           │
+           ▼
+wfth-correlate --uia uia.ndjson --screenshots <dir> [--app-log ...]
+           │
+           ▼
+session.ndjson（標準出力）
+           │
+           ├─→ AIエージェント（NDJSONを直接入力）
+           └─→ jq -s / wfth-session（将来）→ session.json
+
+（将来）wfth-correlate --spec test-spec.json で仕様書ステップ突合
 ```
 
 ---
@@ -450,35 +446,28 @@ Step 3: ビルド構成に E2ETest を追加
 ### 5.1 全体構成
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                  Recording Engine (外部プロセス)          │
-│                                                           │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐ │
-│  │ Input Hook    │  │ Screen       │  │ UIA Tree       │ │
-│  │ Manager       │  │ Capturer     │  │ Snapshotter    │ │
-│  │               │  │              │  │                │ │
-│  │ マウス/KB     │  │ スクリーン    │  │ UIツリー       │ │
-│  │ グローバル     │  │ ショット     │  │ スナップショット │ │
-│  │ フック        │  │ + 差分検知   │  │ + 差分検出     │ │
-│  └──────┬───────┘  └──────┬───────┘  └───────┬────────┘ │
-│         │                 │                   │          │
-│         ▼                 ▼                   ▼          │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │              Event Correlator                     │   │
-│  │    入力イベント + スクリーンショット + UIツリー      │   │
-│  │    を時系列で紐付けて統合ログを生成                 │   │
-│  └──────────────────────┬───────────────────────────┘   │
-│                         │                                │
-│                         ▼                                │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │              Log Writer                           │   │
-│  │    統合ログ + アプリ内ロガーのログをマージ          │   │
-│  └──────────────────────────────────────────────────┘   │
-│                                                           │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │        IPC Receiver（アプリ内ロガーからの受信）     │   │
-│  └──────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│ wfth-record   │ 入力フック + （任意）スクリーンショット撮影 │
+│               │ 出力: record.ndjson + screenshots/*.png    │
+└──────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ wfth-aggregate │ 生イベントを操作アクションに集約          │
+│                │ 出力: aggregated-action NDJSON (stdout)  │
+└──────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ wfth-correlate │ 時間窓相関 + ノイズ分類 + 仕様突合         │
+│                │ 入力: stdin + uia/app-log/screenshots    │
+│                │ 出力: session.ndjson                     │
+└──────────────────────────────────────────────────────────┘
+                           ▲
+                           │
+┌──────────────────────────────────────────────────────────┐
+│ wfth-inspect watch │ UIAツリー変化監視（uia.ndjson）       │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### 5.2 Input Hook Manager
@@ -557,9 +546,9 @@ public class InputHookManager : IDisposable
 }
 ```
 
-### キーボード入力のシーケンス集約
+### キーボード入力のシーケンス集約（wfth-aggregate）
 
-個別のキーイベントではなく、文字列入力としてまとめて記録する。
+`wfth-record` は生キーイベントを保存し、`wfth-aggregate` が文字列入力へ集約する。
 
 ```csharp
 public class KeyboardSequenceAggregator
@@ -691,7 +680,7 @@ public class CaptureStrategy
 }
 ```
 
-### 5.4 UIA Tree Snapshotter
+### 5.4 UIA Tree Snapshotter（`wfth-inspect watch` 相当）
 
 ```csharp
 public class UIATreeSnapshotter
@@ -773,66 +762,40 @@ public class UIATreeSnapshotter
 }
 ```
 
-### 5.5 Event Correlator（統合の要）
+### 5.5 `wfth-aggregate` + `wfth-correlate`（統合の要）
 
-各コンポーネントの出力を時系列で紐付けて統合ログを生成する。
+旧設計の単一 `EventCorrelator` は責務過多のため、**集約** と **相関** に分割する。
 
 ```csharp
-public class EventCorrelator
+public sealed class CorrelateCommand
 {
-    private readonly InputHookManager _inputHook;
-    private readonly ScreenCapturer _screenCapturer;
-    private readonly UIATreeSnapshotter _uiaSnapshotter;
-    private readonly CaptureStrategy _captureStrategy;
-    private readonly LogWriter _logWriter;
-
-    public async Task StartRecording(CancellationToken ct)
+    public async Task<int> RunAsync(CancellationToken ct)
     {
-        _inputHook.MouseAction += async (s, e) =>
+        await foreach (var action in _aggregateReader.ReadAsync(ct)) // stdin
         {
-            // 1. クリック座標のUIA要素を特定
-            var uiaElement = _uiaSnapshotter.FindElementAtPoint(e.ScreenX, e.ScreenY);
+            var uia = _uiaIndex.FindWithinWindow(action.Timestamp, _window);
+            var screenshots = _screenshotIndex.FindFor(action);
+            var appLog = _appLogIndex.FindWithinWindow(action.Timestamp, _window);
 
-            // 2. スクリーンショット（操作前後）
-            var screenshot = await _captureStrategy
-                .CaptureOnInputEvent($"mouse_{e.Action}");
+            var noise = _noiseClassifier.Classify(action, uia, appLog, screenshots);
+            if (noise != null && !_includeNoise && noise.Confidence >= _noiseThreshold)
+                continue;
 
-            // 3. UIAツリーの差分
-            var treeSnapshot = _uiaSnapshotter
-                .TakeSnapshot($"mouse_{e.Action}");
-
-            // 4. 統合RecordedActionとして記録
-            _logWriter.Write(new RecordedAction
+            _writer.Write(new CorrelatedAction
             {
-                Timestamp = e.Timestamp,
-                Type = ActionType.MouseClick,
-                Input = new InputData
-                {
-                    MouseAction = e.Action.ToString(),
-                    ScreenCoordinate = (e.ScreenX, e.ScreenY),
-                    RelativeCoordinate = (e.RelativeX, e.RelativeY)
-                },
-                TargetElement = uiaElement != null
-                    ? new TargetElementData
-                    {
-                        Source = "UIA",
-                        AutomationId = uiaElement.AutomationId,
-                        Name = uiaElement.Name,
-                        ControlType = uiaElement.ControlType,
-                        BoundingRect = uiaElement.BoundingRect
-                    }
-                    : new TargetElementData
-                    {
-                        Source = "Coordinate",
-                        Note = "UIA要素特定不可。画像認識が必要"
-                    },
-                Screenshots = screenshot,
-                UIATreeDiff = treeSnapshot.Diff
+                Seq = ++_seq,
+                Timestamp = action.Timestamp,
+                Type = action.Type,
+                Input = action.Input,
+                Target = ResolveTarget(action, uia),
+                Screenshots = screenshots,
+                UiaDiff = uia?.Diff,
+                AppLog = appLog,
+                Noise = noise?.Type,
+                Confidence = noise?.Confidence
             });
-        };
-
-        // 定期的な画面遷移監視も並行実行
-        await _captureStrategy.MonitorForTransitions(ct);
+        }
+        return 0;
     }
 }
 ```
@@ -847,45 +810,20 @@ public class IpcLogSink : ILogSink
 {
     private readonly NamedPipeClientStream _pipe;
 
-    public IpcLogSink()
+    public IpcLogSink(int recorderPid, string sessionNonce)
     {
-        _pipe = new NamedPipeClientStream(".", "WinFormsTestHarness",
+        _pipe = new NamedPipeClientStream(
+            ".", $"WinFormsTestHarness_{recorderPid}_{sessionNonce}",
             PipeDirection.Out, PipeOptions.Asynchronous);
-    }
-
-    public void Write(LogEntry entry)
-    {
-        var json = JsonSerializer.Serialize(entry);
-        var bytes = Encoding.UTF8.GetBytes(json + "\n");
-        _pipe.WriteAsync(bytes);
     }
 }
 
 // Recording Engine側（受信）
 public class IpcReceiver
 {
-    private readonly NamedPipeServerStream _pipe;
-    public event EventHandler<LogEntry> AppLogReceived;
-
-    public async Task ListenAsync(CancellationToken ct)
-    {
-        _pipe = new NamedPipeServerStream("WinFormsTestHarness",
-            PipeDirection.In, 1, PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous);
-
-        await _pipe.WaitForConnectionAsync(ct);
-
-        using var reader = new StreamReader(_pipe);
-        while (!ct.IsCancellationRequested)
-        {
-            var line = await reader.ReadLineAsync();
-            if (line != null)
-            {
-                var entry = JsonSerializer.Deserialize<LogEntry>(line);
-                AppLogReceived?.Invoke(this, entry);
-            }
-        }
-    }
+    // ACL: 同一ユーザーSIDのみ許可
+    // ハンドシェイク: hello/challenge/response で sessionToken を検証
+    // 失敗時: ipc_auth_failed をNDJSONに出力して切断
 }
 ```
 
@@ -893,82 +831,24 @@ public class IpcReceiver
 
 ## 6. 統合ログ出力形式
 
-AIエージェントへの入力となる統合ログの形式。
+AIエージェントへの入力となる統合ログの形式。**標準は NDJSON**（1行1アクション）。
 
 ```json
-{
-  "session": {
-    "id": "rec-20260222-001",
-    "targetApp": "CustomerManager.exe",
-    "startedAt": "2026-02-22T14:30:00Z",
-    "testCaseRef": "TC-001"
-  },
-  "actions": [
-    {
-      "sequence": 1,
-      "timestamp": "2026-02-22T14:30:05.123Z",
-      "type": "MouseClick",
-      "input": {
-        "action": "LeftClick",
-        "screenCoordinate": [450, 320],
-        "relativeCoordinate": [230, 180]
-      },
-      "targetElement": {
-        "source": "UIA",
-        "automationId": "btnCustomerSearch",
-        "name": "顧客検索",
-        "controlType": "Button",
-        "boundingRect": { "x": 420, "y": 310, "w": 80, "h": 30 }
-      },
-      "screenshots": {
-        "before": "screenshots/001_before.png",
-        "after": "screenshots/001_after.png"
-      },
-      "uiaTreeDiff": {
-        "added": [
-          { "automationId": "", "name": "検索", "controlType": "Window",
-            "note": "SearchForm が新たに出現" }
-        ]
-      },
-      "appLoggerEvents": [
-        { "type": "Event", "control": "btnCustomerSearch", "event": "Click" },
-        { "type": "FormOpened", "form": "SearchForm" }
-      ]
-    },
-    {
-      "sequence": 2,
-      "timestamp": "2026-02-22T14:30:08.456Z",
-      "type": "TextInput",
-      "input": {
-        "text": "田中"
-      },
-      "targetElement": {
-        "source": "UIA",
-        "automationId": "txtSearchCondition",
-        "name": "検索条件",
-        "controlType": "Edit"
-      },
-      "screenshots": {
-        "after": "screenshots/002_after.png"
-      },
-      "appLoggerEvents": [
-        { "type": "PropertyChanged", "control": "txtSearchCondition",
-          "property": "Text", "oldValue": "", "newValue": "田中" }
-      ]
-    }
-  ]
-}
+{"seq":1,"ts":"2026-02-22T14:30:05.123Z","type":"Click","input":{"button":"Left","sx":450,"sy":320,"rx":230,"ry":180},"target":{"source":"UIA","automationId":"btnCustomerSearch","name":"顧客検索","controlType":"Button"},"screenshots":{"before":"screenshots/001_before.png","after":"screenshots/001_after.png"},"uiaDiff":{"added":[{"name":"検索","controlType":"Window"}]},"appLog":[{"type":"event","control":"btnCustomerSearch","event":"Click"}]}
+{"seq":2,"ts":"2026-02-22T14:30:08.456Z","type":"TextInput","input":{"text":"田中"},"target":{"source":"UIA","automationId":"txtSearchCondition","name":"検索条件","controlType":"Edit"},"screenshots":{"after":"screenshots/002_after.png"},"appLog":[{"type":"prop","control":"txtSearchCondition","prop":"Text","new":"田中"}]}
 ```
+
+モノリシック JSON が必要な場合は `jq -s` または将来の `wfth-session` で変換する。
 
 ### AIエージェントが統合ログから得られる情報
 
 | 情報 | ソース | 用途 |
 |------|--------|------|
 | 何をしたか | Input（クリック、テキスト入力） | 操作の再現 |
-| 何に対してしたか | TargetElement（UIA情報） | 安定した要素特定 |
+| 何に対してしたか | target（UIA情報） | 安定した要素特定 |
 | 画面がどう見えたか | Screenshots | 画像認識フォールバック、期待結果の検証 |
-| UIがどう変化したか | UIATreeDiff | 画面遷移の検出、アサーション生成 |
-| アプリ内部で何が起きたか | AppLoggerEvents | 操作の意図の正確な理解 |
+| UIがどう変化したか | uiaDiff | 画面遷移の検出、アサーション生成 |
+| アプリ内部で何が起きたか | appLog | 操作の意図の正確な理解 |
 
 ---
 
@@ -1019,7 +899,7 @@ AIエージェントへの入力となる統合ログの形式。
 }
 ```
 
-**注意**: テスト仕様書パーサーの詳細設計は未着手。
+**注意**: この文書では仕様書パーサーは概要のみ扱う。詳細は `spec-parser-design.md` を参照。
 
 ---
 
@@ -1036,22 +916,21 @@ AIエージェントへの入力となる統合ログの形式。
 
 ## 9. 未設計・今後の検討事項
 
-### Recording Engine周り（優先度高）
+### Recording Engine周り（詳細設計済み）
 
-- グローバルフックがクラッシュした場合のリカバリ
-- 対象アプリが応答なし（ハング）になった場合の挙動
-- マルチウィンドウ・モーダルダイアログの追跡
-- 高DPI環境や複数モニタでの座標ズレ
-- 開始・停止・一時停止のワークフロー設計
-- テスト仕様書のステップとRecordingの紐付けタイミング
-- 手動テスターが使うUI（Recording Controller）の設計
-- ノイズの除去（意図しないクリック、操作ミスの扱い）
-- スクリーンショットの保存戦略（容量と解像度のバランス）
-- UIAで取れない要素の検出と画像認識用リファレンス画像の自動抽出
-- アプリ内ロガーとの時刻同期・イベント突合の精度
-- CIでのヘッドレス実行の可能性
+- 信頼性・安定性: `recording-reliability-design.md`
+- データ品質/容量: `recording-data-quality-design.md`
+- 外部連携（IPC/CI）: `recording-integration-design.md`
+- キャプチャ統合: `capture-design.md`
+- 集約/相関分割: `correlate-split-design.md`
 
-### テスト仕様書パーサー（詳細設計未着手）
+### Recording Engine周り（未設計/残課題）
+
+- 開始・停止・一時停止のワークフロー設計（運用UI含む）
+- 手動テスターが使う UI（Recording Controller）の具体設計
+- 統合ログスキーマのバージョニング方針（後方互換ルール）
+
+### テスト仕様書パーサー（詳細設計は別紙）
 
 - Excel/Word等の各形式への対応
 - 非定型な仕様書フォーマットへの対応戦略
@@ -1075,7 +954,7 @@ AIエージェントへの入力となる統合ログの形式。
 | アプリ内ロガー | C# NuGet パッケージ |
 | Recording Engine | C# 外部プロセス |
 | IPC | 名前付きパイプ (NamedPipeStream) |
-| 統合ログ | JSON形式 |
+| 統合ログ | NDJSON（標準） / JSON（変換段で生成） |
 | スクリーンショット | PNG |
 
 ---
@@ -1087,12 +966,17 @@ WinFormsTestHarness/
 ├── src/
 │   ├── WinFormsTestHarness.Core/          # テスト実行フレームワーク（ドライバー層 + 操作抽象化層）
 │   ├── WinFormsTestHarness.Logger/        # アプリ内ロガー NuGet パッケージ
-│   ├── WinFormsTestHarness.Recorder/      # Recording Engine（外部プロセス）
-│   └── WinFormsTestHarness.SpecParser/    # テスト仕様書パーサー
+│   ├── WinFormsTestHarness.Common/        # 共通CLI/IO/時刻ユーティリティ
+│   ├── WinFormsTestHarness.Record/        # 入力イベント記録（wfth-record）
+│   ├── WinFormsTestHarness.Capture/       # スクリーンショット共有ライブラリ + CLI
+│   ├── WinFormsTestHarness.Inspect/       # UIA偵察・監視（wfth-inspect）
+│   ├── WinFormsTestHarness.Aggregate/     # 生イベント集約（wfth-aggregate）
+│   ├── WinFormsTestHarness.Correlate/     # 時間窓相関（wfth-correlate）
+│   └── WinFormsTestHarness.SpecParser/    # テスト仕様書パーサー（将来）
 ├── tests/
 │   └── WinFormsTestHarness.Tests/         # フレームワーク自体のテスト
 ├── samples/
 │   ├── SampleApp/                         # テスト対象サンプルアプリ
 │   └── SampleTests/                       # 生成されたテストコードのサンプル
-└── docs/
+└── doc/
 ```
