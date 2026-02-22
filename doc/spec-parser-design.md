@@ -24,14 +24,17 @@
 Excel ファイル (.xlsx)
     │
     ▼
-[1. Excel Reader]  セルデータ + 書式情報を抽出
+[1. Excel Reader]  セルデータ + 書式情報 + 埋め込み画像を抽出
+    │
+    ├─ テキストセル → そのまま
+    └─ 埋め込み画像 → [1.5 OCR Engine] でテキスト化
     │
     ▼
-[2. Layout Analyzer]  構造的特徴を抽出（ヘッダー候補、セル結合、罫線パターン）
-    │
+[2. Layout Analyzer]  構造的特徴を抽出（ヘッダー候補、セル結合、罫線パターン、
+    │                  非定型パターン検出）
     ▼
 [3. LLM Interpreter]  レイアウトを解釈し、テストケースを構造化データに変換
-    │
+    │                  （非定型フォーマットも文脈から推定）
     ▼
 [4. Validator]  JSON Schema 検証 + 整合性チェック
     │
@@ -61,6 +64,10 @@ LLM Options:
   --model <name>        モデル名（デフォルト: プロバイダのデフォルト）
   --api-key <key>       APIキー（環境変数 WFTH_LLM_API_KEY も使用可）
   --max-retries <n>     LLM応答のバリデーション失敗時の再試行回数（デフォルト: 2）
+
+OCR Options:
+  --ocr-engine <engine> vision|windows|tesseract|none（デフォルト: vision）
+  --ocr-lang <lang>     OCR言語（windows/tesseract用、デフォルト: ja）
 
 Template Options:
   --hint <path>         レイアウトヒントファイル（フォーマットの説明を与える）
@@ -156,11 +163,158 @@ public class MergedRegion
 
 4. 非表示シート/行/列: スキップする（テスト仕様として意図されていない）。
 
-5. 画像/図形: 現時点では無視（将来的にOCRで読み取る可能性）。
+5. 画像/図形: OCR で読み取り、テキストとして抽出する（セクション3.4参照）。
 
 6. 大規模シート: 1000行 x 50列 を上限とする（LLMコンテキスト制約）。
    超過する場合はブロック分割して処理。
 ```
+
+### 3.4 Excel内画像のOCR読み取り
+
+Excel内に画像として貼り込まれた仕様書（紙のスキャン、スクリーンショット、別ツールからの貼り付け等）をOCRで読み取る。
+
+#### 画像抽出
+
+```csharp
+/// <summary>シート内の埋め込み画像</summary>
+public class EmbeddedImage
+{
+    public int Index { get; set; }
+    public string AnchorCell { get; set; } = "";  // 画像が配置されたセル位置
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public byte[] ImageData { get; set; } = Array.Empty<byte>();
+    public string Format { get; set; } = "";       // "png", "jpeg", etc.
+    public string? OcrText { get; set; }            // OCR結果
+}
+```
+
+ClosedXML で `worksheet.Pictures` から画像を列挙し、バイナリデータを抽出する。
+
+#### OCR方式
+
+```
+方式A — LLM Vision API（推奨）:
+  画像をBase64エンコードしてLLMのVision機能に送信。
+  テスト仕様書の文脈を理解したうえでテキストを抽出できる。
+  Claude / GPT-4o 等のマルチモーダルモデルを使用。
+
+方式B — Windows.Media.Ocr:
+  Windows 10+ 組み込みの OCR エンジン。
+  日本語対応済み。オフラインで動作。
+  テキスト抽出のみ（レイアウト理解は LLM に委譲）。
+
+方式C — Tesseract OCR:
+  オープンソース OCR。クロスプラットフォーム。
+  日本語は学習データの追加が必要。精度は方式A/Bより劣る。
+```
+
+```
+選択ロジック:
+  --ocr-engine <engine>  vision|windows|tesseract（デフォルト: vision）
+
+  vision:    LLM の Vision API で画像を直接解釈（最も高精度）
+  windows:   Windows.Media.Ocr でテキスト抽出 → LLM で構造化
+  tesseract: Tesseract OCR でテキスト抽出 → LLM で構造化
+```
+
+#### LLM Vision による画像解釈
+
+画像がテスト仕様書の一部である場合、テキスト抽出だけでなくレイアウト構造も解釈する。
+
+```
+プロンプト:
+  "この画像はテスト仕様書の一部です。
+   以下の情報を抽出してください:
+   1. テーブル構造がある場合、行と列のデータ
+   2. 手順と期待結果
+   3. テストケースIDや項目名
+   Markdown テーブル形式で出力してください。"
+```
+
+抽出結果は通常のセルデータと同様に Layout Analyzer に渡され、以降の処理は統一される。
+
+#### OCR結果のSheetDataへの統合
+
+```
+画像の配置セル位置（AnchorCell）を基準に、OCRで抽出したテキストを
+SheetData の該当位置に「仮想セル」として挿入する。
+
+例:
+  画像がセル B5 に配置、OCR結果がテーブル（3行2列）の場合:
+  → B5〜C7 に仮想セルとして挿入
+  → CellData.Source = "ocr" フラグを付与（トレーサビリティ）
+```
+
+### 3.5 非定型フォーマットへの対応
+
+日本の現場のExcelテスト仕様書は以下のような非定型パターンが多い。
+
+#### パターン1 — 巨大セル自由記述
+
+```
+1つのセルに手順と期待結果が自由記述で混在:
+
+┌─────────────────────────────────────────┐
+│ A1: テストケース名: 顧客検索テスト       │
+│                                           │
+│ 手順:                                     │
+│ メイン画面で検索ボタンを押す。            │
+│ 田中と入力して検索ボタン。                │
+│                                           │
+│ 確認: 田中太郎が出ること。1件であること。 │
+└─────────────────────────────────────────┘
+```
+
+対応: LLMが「手順:」「確認:」等のキーワードで区分を推測。
+Layout Analyzer では巨大セル（改行5個以上）にフラグを立て、
+LLM プロンプトに「このセルは自由記述です。手順と期待結果を分離してください」と指示。
+
+#### パターン2 — 手順が番号なしの箇条書き
+
+```
+・画面を開く
+・名前を入れる
+・ボタンを押す
+```
+
+対応: LLMが箇条書きを認識して seq を自動付番。
+
+#### パターン3 — テストケース境界が不明確
+
+```
+セル結合もなく、空行もなく、テストケースが連続:
+
+| 顧客検索 | 検索ボタンを押す | 検索画面が開く |
+|          | 田中と入力       | 結果が表示     |
+| 顧客追加 | 追加ボタンを押す | 追加画面が開く |
+```
+
+対応: LLMが「顧客検索」「顧客追加」をテストケース名と判断して分割。
+Layout Analyzer ではA列の値変化をブロック境界候補として検出。
+
+#### パターン4 — 複数シートに分散
+
+```
+Sheet1: テストケース一覧（ID、名前、前提条件）
+Sheet2: 手順詳細（IDに紐づく手順）
+Sheet3: 期待結果（IDに紐づく期待結果）
+```
+
+対応: 全シートを読み取り、LLMにシート間の関連を推定させる。
+テストケースIDをキーにした結合を指示。
+
+#### パターン5 — ヘッダー行がない/不規則
+
+```
+行1: (空)
+行2: (空)
+行3: なんかのメモ
+行4: テスト名    やること    確認すること
+行5: ログイン    admin入力   画面遷移
+```
+
+対応: Layout Analyzer がヘッダー候補を複数提示。LLMが最も妥当な行を選択。
 
 ---
 
@@ -711,7 +865,13 @@ src/WinFormsTestHarness.Parse/
 ├── Program.cs                        — System.CommandLine エントリポイント
 ├── Excel/
 │   ├── ExcelReader.cs                — ClosedXML でセルデータ抽出
-│   └── SheetData.cs                  — セルデータ・書式の中間表現
+│   ├── ImageExtractor.cs             — 埋め込み画像の抽出
+│   └── SheetData.cs                  — セルデータ・書式・画像の中間表現
+├── Ocr/
+│   ├── IOcrEngine.cs                 — OCRエンジンインターフェース
+│   ├── VisionOcrEngine.cs            — LLM Vision API（推奨）
+│   ├── WindowsOcrEngine.cs           — Windows.Media.Ocr
+│   └── TesseractOcrEngine.cs         — Tesseract OCR
 ├── Layout/
 │   ├── LayoutAnalyzer.cs             — 構造特徴抽出
 │   ├── BlockDetector.cs              — ブロック境界検出
@@ -767,7 +927,7 @@ src/WinFormsTestHarness.Parse/
 | 制限 | 理由 | 回避策 |
 |------|------|--------|
 | .xlsx のみ対応 | ClosedXML が .xlsx のみ | .xls は事前変換 |
-| 画像/図形は無視 | 構造化困難 | 手動で補完 |
+| 画像OCRはLLM Vision依存 | 高精度だがAPI課金 | windows/tesseractエンジンで代替可 |
 | 1シート1000行上限 | LLMコンテキスト制約 | チャンク分割で対応 |
 | LLM依存（オフライン不可） | AI解釈型の設計上不可避 | --hint で精度補完 |
 | 多言語未対応 | 日本語フォーマット前提 | プロンプトのローカライズで拡張可能 |
