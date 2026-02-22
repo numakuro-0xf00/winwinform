@@ -5,13 +5,15 @@
 Unix哲学に基づく独立パイプライン型。各CLIツールは単一責務でNDJSONストリームを出力し、組み合わせて使用する。
 
 ```
-wfth-record   — 入力イベント（マウス/KB）+ スクリーンショット → NDJSON
-wfth-inspect  — UIAツリー変化を監視 → NDJSON（実装済み）
-wfth-capture  — スクリーンショット単体撮影（デバッグ/独立利用）→ NDJSON + PNG
-wfth-correlate — 複数NDJSONを時系列マージ → 統合ログJSON
+wfth-record    — 入力イベント（マウス/KB）+ スクリーンショット → NDJSON
+wfth-inspect   — UIAツリー変化を監視 → NDJSON（実装済み）
+wfth-capture   — スクリーンショット単体撮影（デバッグ/独立利用）→ NDJSON + PNG
+wfth-aggregate — 生イベント → 集約アクション（Click, TextInput等）→ NDJSON
+wfth-correlate — 集約済みアクションに UIA変化・スクリーンショットを時間窓で紐付け → NDJSON
 
 ※ スクリーンショット撮影の詳細設計 → capture-design.md
 ※ wfth-record が --capture オプションで撮影を統合（主要ユースケース）
+※ wfth-aggregate / wfth-correlate 分割の詳細 → correlate-split-design.md
 ```
 
 ---
@@ -146,43 +148,57 @@ Program.cs (System.CommandLine)
 
 ---
 
-## 3. wfth-correlate（イベント統合）
+## 3. wfth-aggregate + wfth-correlate（イベント集約・統合）
 
-### 3.1 CLIインターフェース
+> **設計変更**: UNIX思想レビューに基づき、旧 `wfth-correlate` を `wfth-aggregate`（入力集約）と `wfth-correlate`（時間窓相関）に分割。詳細は `correlate-split-design.md` を参照。
+
+### 3.1 パイプライン構成
+
+```bash
+# 基本パイプライン
+wfth-aggregate < record.ndjson | wfth-correlate --uia uia.ndjson > session.ndjson
+
+# jq でフィルタ
+wfth-aggregate < record.ndjson | jq 'select(.type == "Click")'
+```
+
+### 3.2 wfth-aggregate CLIインターフェース
 
 ```
-wfth-correlate [options] [session-dir]
+wfth-aggregate [options]
 
-Inputs（セッションディレクトリの規約ファイル名を自動検出、または明示指定）:
-  --record <path>      wfth-record出力NDJSON（入力イベント + スクリーンショット混在）
-  --uia <path>         UIAツリー変化NDJSON（wfth-inspect watch出力）
-  --app-log <path>     アプリ内ロガーNDJSON（将来、IPC経由）
+Input:
+  stdin                     wfth-record 出力 NDJSON
 
 Options:
-  -o, --output <path>  出力ファイル（デフォルト: stdout）
-  --text-timeout <ms>  キー入力→TextInput集約タイムアウト（デフォルト: 500）
-  --window <ms>        イベント相関の時間窓（デフォルト: 2000）
-  --format <type>      json|ndjson（デフォルト: json）
+  --text-timeout <ms>       キー入力集約タイムアウト（デフォルト: 500）
+  --click-timeout <ms>      Click判定タイムアウト（デフォルト: 300）
+  --no-denoise              ノイズ分類を無効化
+  --debug                   診断情報を stderr に出力
+  --quiet                   stderr 出力を抑制
 ```
 
-### 3.2 動作フロー
+### 3.3 wfth-correlate CLIインターフェース
 
 ```
-1. record.ndjson を読み込み、type フィールドで入力系（mouse, key, window, session）と screenshot に分類
-2. uia.ndjson, app-log.ndjson を読み込み
-3. 全イベントをタイムスタンプでソート
-4. 入力イベントを「操作アクション」に変換:
-   a. マウス: LeftDown + LeftUp（近接）→ Click、Move(drag) → Drag
-   b. キーボード: 連続キー入力 → TextInput に集約（--text-timeout で区切り）
-   c. 特殊キー（Enter, Tab, Escape等）→ 独立アクション
-5. 各アクションに対して時間窓（--window）内の関連イベントを紐付け:
-   - UIA変化（アクション後 0〜window ms）
-   - スクリーンショット（record.ndjson内のscreenshot型イベント、before/after）
-   - アプリ内ログ（アクション前後 window ms）
-6. 統合ログ（session.json）を出力
+wfth-correlate [options]
+
+Input:
+  stdin                     wfth-aggregate 出力 NDJSON（集約済みアクション）
+
+Options:
+  --uia <path>              UIA変化 NDJSON（wfth-inspect watch 出力）
+  --app-log <path>          アプリ内ロガー NDJSON
+  --screenshots <dir>       スクリーンショットディレクトリ
+  --window <ms>             相関時間窓（デフォルト: 2000）
+  --explain                 各相関の判定根拠を注釈
+  --debug                   診断情報を stderr に出力
+  --quiet                   stderr 出力を抑制
 ```
 
-### 3.3 セッションディレクトリ規約
+**デフォルト出力は NDJSON**（旧設計のモノリシック JSON から変更）。
+
+### 3.4 セッションディレクトリ規約
 
 ```
 sessions/rec-20260222-143000/
@@ -193,12 +209,10 @@ sessions/rec-20260222-143000/
 │   ├── 0001_after.png
 │   ├── 0002_after.png
 │   └── ...
-└── session.json       ← wfth-correlate 出力
+└── session.ndjson     ← wfth-correlate 出力（NDJSON）
 ```
 
-`wfth-correlate sessions/rec-20260222-143000/` でディレクトリを指定すると、規約ファイル名（record.ndjson, uia.ndjson）を自動検出する。存在しないファイルはスキップ（警告出力）。
-
-### 3.4 入力イベントの集約ルール
+### 3.5 入力イベントの集約ルール（wfth-aggregate 担当）
 
 #### マウスクリック判定
 
@@ -220,119 +234,44 @@ key(down, T) + key(down, T+50) + key(down, T+100) + [500ms無入力]
 修飾キー（Shift/Ctrl/Alt）は集約に含めない。
 特殊キー（Enter, Tab, Escape, Delete, Backspace, F1-F12等）は集約を中断し独立アクションになる。
 
-### 3.5 統合ログ出力形式
+### 3.6 統合ログ出力形式（wfth-correlate 出力）
 
-既存設計ドキュメント（セクション6）の形式に準拠。
+NDJSON形式で1行1アクション:
 
 ```json
-{
-  "session": {
-    "id": "rec-20260222-143000",
-    "targetApp": "SampleApp.exe",
-    "startedAt": "2026-02-22T14:30:00.000Z",
-    "endedAt": "2026-02-22T14:32:05.300Z",
-    "duration": 125.3
-  },
-  "actions": [
-    {
-      "seq": 1,
-      "ts": "2026-02-22T14:30:05.123Z",
-      "type": "Click",
-      "input": {
-        "button": "Left",
-        "sx": 450, "sy": 320,
-        "rx": 230, "ry": 180
-      },
-      "target": {
-        "source": "UIA",
-        "automationId": "btnSearch",
-        "name": "検索",
-        "controlType": "Button",
-        "rect": {"x":420,"y":310,"w":80,"h":30}
-      },
-      "screenshots": {
-        "before": "screenshots/0001_before.png",
-        "after": "screenshots/0001_after.png"
-      },
-      "uiaDiff": {
-        "added": [
-          {"automationId":"","name":"検索","controlType":"Window"}
-        ],
-        "removed": [],
-        "changed": []
-      },
-      "appLog": []
-    },
-    {
-      "seq": 2,
-      "ts": "2026-02-22T14:30:08.456Z",
-      "type": "TextInput",
-      "input": {
-        "text": "田中",
-        "duration": 0.3
-      },
-      "target": {
-        "source": "UIA",
-        "automationId": "txtSearchCondition",
-        "name": "検索条件",
-        "controlType": "Edit"
-      },
-      "screenshots": {
-        "after": "screenshots/0002_after.png"
-      },
-      "uiaDiff": null,
-      "appLog": [
-        {"ts":"...","type":"PropertyChanged","control":"txtSearchCondition","property":"Text","value":"田中"}
-      ]
-    },
-    {
-      "seq": 3,
-      "ts": "2026-02-22T14:30:10.789Z",
-      "type": "SpecialKey",
-      "input": {
-        "key": "Enter"
-      },
-      "target": {
-        "source": "UIA",
-        "automationId": "txtSearchCondition",
-        "controlType": "Edit"
-      },
-      "screenshots": {
-        "before": "screenshots/0003_before.png",
-        "after": "screenshots/0003_after.png"
-      },
-      "uiaDiff": {
-        "changed": [
-          {"automationId":"dgvResults","property":"RowCount","from":0,"to":1}
-        ]
-      },
-      "appLog": []
-    }
-  ]
-}
+{"seq":1,"ts":"2026-02-22T14:30:05.123Z","type":"Click","input":{"button":"Left","sx":450,"sy":320,"rx":230,"ry":180},"target":{"source":"UIA","automationId":"btnSearch","name":"検索","controlType":"Button","rect":{"x":420,"y":310,"w":80,"h":30}},"screenshots":{"before":"screenshots/0001_before.png","after":"screenshots/0001_after.png"},"uiaDiff":{"added":[{"automationId":"","name":"検索","controlType":"Window"}]}}
+{"seq":2,"ts":"2026-02-22T14:30:08.456Z","type":"TextInput","input":{"text":"田中","duration":0.3},"target":{"source":"UIA","automationId":"txtSearchCondition","name":"検索条件","controlType":"Edit"},"screenshots":{"after":"screenshots/0002_after.png"}}
+{"seq":3,"ts":"2026-02-22T14:30:10.789Z","type":"SpecialKey","input":{"key":"Enter"},"target":{"source":"UIA","automationId":"txtSearchCondition","controlType":"Edit"},"screenshots":{"before":"screenshots/0003_before.png","after":"screenshots/0003_after.png"},"uiaDiff":{"changed":[{"automationId":"dgvResults","property":"RowCount","from":0,"to":1}]}}
 ```
 
-### 3.6 アーキテクチャ
+### 3.7 アーキテクチャ
+
+#### wfth-aggregate
+
+```
+Program.cs (System.CommandLine)
+  ├── Aggregation/
+  │   ├── MouseClickAggregator.cs    — Down+Up → Click/DoubleClick/Drag
+  │   ├── KeySequenceAggregator.cs   — 連続キー → TextInput
+  │   └── ActionBuilder.cs           — 集約済みアクション生成
+  ├── Denoise/
+  │   └── NoiseClassifier.cs         — ノイズ分類（オプション）
+  └── Models/
+      └── AggregatedAction.cs        — 集約済みアクションDTO
+```
+
+#### wfth-correlate
 
 ```
 Program.cs (System.CommandLine)
   ├── Readers/
-  │   ├── NdJsonReader.cs            — NDJSON汎用リーダー
-  │   ├── RecordEventReader.cs       — wfth-record出力パーサー（input + screenshot 分類）
   │   ├── UiaEventReader.cs          — wfth-inspect watch出力パーサー
   │   └── AppLogReader.cs            — アプリ内ロガー出力パーサー
-  ├── Aggregation/
-  │   ├── MouseClickAggregator.cs    — Down+Up → Click/DoubleClick/Drag
-  │   ├── KeySequenceAggregator.cs   — 連続キー → TextInput
-  │   └── ActionBuilder.cs          — 集約済みアクション生成
   ├── Correlation/
   │   ├── TimeWindowCorrelator.cs    — 時間窓ベースのイベント紐付け
   │   └── UiaTargetResolver.cs       — クリック座標→UIA要素の逆引き
-  ├── Models/
-  │   ├── CorrelatedAction.cs        — 統合済みアクション
-  │   └── SessionLog.cs             — セッション全体の統合ログ
-  └── Output/
-      └── SessionJsonWriter.cs       — session.json出力
+  └── Models/
+      └── CorrelatedAction.cs        — 統合済みアクション
 ```
 
 ---
@@ -358,8 +297,11 @@ PID_INSPECT=$!
 kill $PID_RECORD $PID_INSPECT
 wait
 
-# 統合ログ生成
-wfth-correlate $SESSION/ -o $SESSION/session.json
+# 統合ログ生成（aggregate → correlate パイプライン）
+wfth-aggregate < $SESSION/record.ndjson \
+  | wfth-correlate --uia $SESSION/uia.ndjson \
+                   --screenshots $SESSION/screenshots \
+  > $SESSION/session.ndjson
 ```
 
 ### アプリ起動から記録
@@ -378,7 +320,7 @@ sleep 2
 PROC=SampleApp
 wfth-inspect watch --process $PROC > $SESSION/uia.ndjson &
 
-# ... テスト実施 → 停止 → correlate
+# ... テスト実施 → 停止 → aggregate + correlate
 ```
 
 ### スクリーンショット単体（デバッグ用）
@@ -391,9 +333,57 @@ wfth-capture --process SampleApp --once --out-dir ./debug
 wfth-capture --process SampleApp --interval 1000 > captures.ndjson
 ```
 
+### jq との連携（レシピ集）
+
+```bash
+# タイプでフィルタ
+jq 'select(.type == "mouse")' < record.ndjson
+
+# 複数ストリームのマージ＆ソート
+jq -s 'sort_by(.ts)' record.ndjson uia.ndjson
+
+# 集約済みアクションからクリックのみ抽出
+wfth-aggregate < record.ndjson | jq 'select(.type == "Click")'
+
+# ノイズ除去済みのみ
+wfth-aggregate < record.ndjson | jq 'select(.noise == null)'
+```
+
 ---
 
-## 5. 今後の設計課題
+## 5. 全CLIツール共通規約
+
+UNIX思想レビューに基づき、全ツールに適用する共通規約。
+
+### 5.1 終了コード
+
+| コード | 意味 | 例 |
+|--------|------|-----|
+| 0 | 成功 | — |
+| 1 | 引数エラー | 必須オプション不足 |
+| 2 | 対象未発見 | プロセス・UI要素が見つからない |
+| 3 | 実行時エラー | UIA操作失敗、I/Oエラー |
+
+定義: `WinFormsTestHarness.Common.Cli.ExitCodes`
+
+### 5.2 診断フラグ
+
+全ツールに以下のグローバルオプションを追加:
+- `--debug`: 診断情報を stderr に出力（フック状態、キュー深度、処理速度等）
+- `--quiet`: stderr 出力を抑制（エラーのみ出力）
+
+### 5.3 出力規約
+
+- **stdout**: データ出力のみ（NDJSON）。パイプライン合成可能
+- **stderr**: エラー・警告・診断情報。`--quiet` で警告・情報を抑制、エラーは常に出力
+
+### 5.4 共通ライブラリ
+
+`WinFormsTestHarness.Common` — 詳細は `common-library-design.md` を参照。
+
+---
+
+## 6. 今後の設計課題
 
 ### 全体
 - 各ツールの終了シグナル伝搬（1つ停止したら全停止するか）
@@ -404,6 +394,8 @@ wfth-capture --process SampleApp --interval 1000 > captures.ndjson
 
 ### 関連設計ドキュメント
 - `capture-design.md` — スクリーンショットキャプチャ詳細設計（共有ライブラリ + CLIラッパー）
+- `correlate-split-design.md` — wfth-correlate 分割設計（UNIX思想レビュー反映）
+- `common-library-design.md` — 共通ライブラリ設計
 - `recording-reliability-design.md` — 信頼性・安定性設計
 - `recording-data-quality-design.md` — データの質と量設計
 - `recording-integration-design.md` — 外部連携設計

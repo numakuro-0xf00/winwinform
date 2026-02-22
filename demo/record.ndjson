@@ -1,0 +1,16 @@
+{"ts":"2026-02-22T14:30:00.000Z","type":"session","action":"start","process":"SampleApp","pid":12345,"hwnd":"0x001A0F32","cmdline":"C:\\path\\SampleApp.exe"}
+{"ts":"2026-02-22T14:30:05.100Z","type":"mouse","action":"LeftDown","sx":450,"sy":320,"rx":230,"ry":180}
+{"ts":"2026-02-22T14:30:05.150Z","type":"mouse","action":"LeftUp","sx":450,"sy":320,"rx":230,"ry":180}
+{"ts":"2026-02-22T14:30:08.400Z","type":"key","action":"down","vk":84,"key":"T","scan":20,"char":"T"}
+{"ts":"2026-02-22T14:30:08.450Z","type":"key","action":"up","vk":84,"key":"T","scan":20}
+{"ts":"2026-02-22T14:30:08.500Z","type":"key","action":"down","vk":65,"key":"A","scan":30,"char":"a"}
+{"ts":"2026-02-22T14:30:08.550Z","type":"key","action":"up","vk":65,"key":"A","scan":30}
+{"ts":"2026-02-22T14:30:08.600Z","type":"key","action":"down","vk":78,"key":"N","scan":49,"char":"n"}
+{"ts":"2026-02-22T14:30:08.650Z","type":"key","action":"up","vk":78,"key":"N","scan":49}
+{"ts":"2026-02-22T14:30:10.700Z","type":"key","action":"down","vk":13,"key":"Enter","scan":28}
+{"ts":"2026-02-22T14:30:10.750Z","type":"key","action":"up","vk":13,"key":"Enter","scan":28}
+{"ts":"2026-02-22T14:30:15.000Z","type":"mouse","action":"LeftDown","sx":500,"sy":400,"rx":280,"ry":260}
+{"ts":"2026-02-22T14:30:15.050Z","type":"mouse","action":"LeftUp","sx":500,"sy":400,"rx":280,"ry":260}
+{"ts":"2026-02-22T14:30:15.080Z","type":"mouse","action":"LeftDown","sx":500,"sy":400,"rx":280,"ry":260}
+{"ts":"2026-02-22T14:30:15.130Z","type":"mouse","action":"LeftUp","sx":500,"sy":400,"rx":280,"ry":260}
+{"ts":"2026-02-22T14:30:20.000Z","type":"session","action":"stop","reason":"user_interrupt","duration":20.0}
