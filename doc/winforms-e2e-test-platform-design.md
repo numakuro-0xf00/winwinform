@@ -1,6 +1,7 @@
 # WinForms E2E テスト自動化プラットフォーム — 設計ドキュメント
 
 > 更新注記（2026-02-22）: Recording パイプラインは `wfth-aggregate` + `wfth-correlate` 分割を正とする。
+> CLI契約の正規ソースは `recording-cli-design.md`、分割の経緯は `correlate-split-design.md` を参照。
 
 ## 1. プロジェクト概要
 

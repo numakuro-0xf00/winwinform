@@ -69,7 +69,7 @@ Recording セッションには `wfth-record` + `wfth-inspect` の2プロセス�
 wfth-record  --process SampleApp --capture > $SESSION/record.ndjson &
 wfth-inspect watch --process SampleApp     > $SESSION/uia.ndjson &
 # ... 手動で kill & wait ...
-wfth-correlate $SESSION/ -o $SESSION/session.json
+wfth-aggregate $SESSION/ | wfth-correlate > $SESSION/session.ndjson
 ```
 
 **問題**:

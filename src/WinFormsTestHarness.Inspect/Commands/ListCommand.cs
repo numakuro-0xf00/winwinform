@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using WinFormsTestHarness.Common.Cli;
+using WinFormsTestHarness.Common.Serialization;
 using WinFormsTestHarness.Inspect.Helpers;
 
 namespace WinFormsTestHarness.Inspect.Commands;

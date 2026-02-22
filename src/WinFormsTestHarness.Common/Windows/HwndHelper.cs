@@ -1,3 +1,5 @@
+using WinFormsTestHarness.Common.Models;
+
 namespace WinFormsTestHarness.Common.Windows;
 
 /// <summary>
@@ -22,5 +24,42 @@ public static class HwndHelper
         }
 
         throw new ArgumentException($"Invalid hwnd format: '{hwndHex}'. Expected hex string like '0x001A0F32'.");
+    }
+
+    /// <summary>
+    /// --hwnd または --process からウィンドウハンドルを解決する。
+    /// いずれも未指定の場合は InvalidOperationException をスローする。
+    /// </summary>
+    public static IntPtr Resolve(string? hwndHex, string? processName, IReadOnlyList<WindowInfo> windows)
+    {
+        if (!string.IsNullOrEmpty(hwndHex))
+        {
+            return ParseHwnd(hwndHex);
+        }
+
+        if (!string.IsNullOrEmpty(processName))
+        {
+            return FindByProcess(processName, windows);
+        }
+
+        throw new InvalidOperationException("Either --hwnd or --process must be specified.");
+    }
+
+    /// <summary>
+    /// プロセス名（部分一致、大文字小文字無視）でウィンドウを検索し、ハンドルを返す。
+    /// </summary>
+    public static IntPtr FindByProcess(string processName, IReadOnlyList<WindowInfo> windows)
+    {
+        var match = windows.FirstOrDefault(w =>
+            w.Process.Contains(processName, StringComparison.OrdinalIgnoreCase));
+
+        if (match == null)
+        {
+            throw new InvalidOperationException(
+                $"No window found for process matching '{processName}'. " +
+                $"Available: {string.Join(", ", windows.Select(w => w.Process).Distinct())}");
+        }
+
+        return ParseHwnd(match.Hwnd);
     }
 }

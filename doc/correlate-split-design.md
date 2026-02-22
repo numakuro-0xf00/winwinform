@@ -206,4 +206,5 @@ wfth-correlate ... | wfth-session --process SampleApp > session.json
 | デフォルト出力 | モノリシック JSON | NDJSON |
 | ディレクトリ規約 | 暗黙検出 | 明示引数 |
 | ノイズ分類 | correlate 内部 | correlate が担当（`--include-noise` で制御） |
+| ノイズ閾値 | なし | `--noise-threshold` で調整可能 |
 | 判定根拠 | 不可視 | `--explain` モード |
