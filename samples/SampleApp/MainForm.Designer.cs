@@ -112,16 +112,6 @@ partial class MainForm
         this.dgvCustomers.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         this.dgvCustomers.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
         //
-        // pnlTest
-        //
-        this.pnlTest = new Panel();
-        this.pnlTest.Name = "pnlTest";
-        this.pnlTest.Dock = DockStyle.Bottom;
-        this.pnlTest.Height = 40;
-        this.pnlTest.Padding = new Padding(4);
-        this.pnlTest.Controls.Add(this.btnTest);
-        this.pnlTest.Controls.Add(this.txtTest);
-        //
         // txtTest
         //
         this.txtTest = new TextBox();
@@ -138,6 +128,16 @@ partial class MainForm
         this.btnTest.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         this.btnTest.Location = new Point(710, 7);
         this.btnTest.Size = new Size(80, 25);
+        //
+        // pnlTest
+        //
+        this.pnlTest = new Panel();
+        this.pnlTest.Name = "pnlTest";
+        this.pnlTest.Dock = DockStyle.Bottom;
+        this.pnlTest.Height = 40;
+        this.pnlTest.Padding = new Padding(4);
+        this.pnlTest.Controls.Add(this.btnTest);
+        this.pnlTest.Controls.Add(this.txtTest);
         //
         // statusStrip
         //
