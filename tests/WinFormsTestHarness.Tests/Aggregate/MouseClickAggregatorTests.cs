@@ -20,7 +20,11 @@ public class MouseClickAggregatorTests
             dblclickTimeoutMs: DblClickTimeoutMs);
     }
 
-    private static string Ts(int ms) => $"2026-02-23T10:00:00.{ms:D3}Z";
+    private static string Ts(int ms)
+    {
+        var dt = new DateTimeOffset(2026, 2, 23, 10, 0, 0, TimeSpan.Zero).AddMilliseconds(ms);
+        return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+    }
 
     private static RawMouseEvent Mouse(string action, int ms, int sx = 100, int sy = 200, int rx = 50, int ry = 100, bool drag = false, int? delta = null) => new()
     {
@@ -70,12 +74,12 @@ public class MouseClickAggregatorTests
     }
 
     [Test]
-    public void LeftDown_LeftUp_ClickTimeout超過_集約されずドロップされる()
+    public void LeftDown_LeftUp_ClickTimeoutを1ms超過_集約されずドロップされる()
     {
-        // click-timeout(300ms) を超過した長押し操作は集約対象外としてドロップされる
+        // 境界値: ClickTimeoutMs + 1 (301ms) → Click にならない（<= 判定）
         var results = new List<AggregatedAction>();
         results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", ClickTimeoutMs + 100)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", ClickTimeoutMs + 1)));
         results.AddRange(_aggregator.Flush());
 
         Assert.That(results, Is.Empty);
@@ -145,17 +149,17 @@ public class MouseClickAggregatorTests
     }
 
     [Test]
-    public void 連続2回Click_DblClickTimeout超過_個別のClickが2つ生成される()
+    public void 連続2回Click_DblClickTimeoutを1ms超過_個別のClickが2つ生成される()
     {
+        // 境界値: DblClickTimeoutMs + 1 (501ms) → DoubleClick にならない
         var results = new List<AggregatedAction>();
 
-        // 1回目のクリック
         results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
         results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 50)));
-        // 2回目のクリック（DblClickTimeout 超過: 600ms > 500ms）
+        // 2回目のクリック（DblClickTimeout + 1ms 超過）
         // DoubleClick 待ちタイムアウトは次イベントの CheckTimeouts で発動
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", DblClickTimeoutMs + 100)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", DblClickTimeoutMs + 150)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", DblClickTimeoutMs + 1)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", DblClickTimeoutMs + 51)));
         results.AddRange(_aggregator.Flush());
 
         Assert.That(results, Has.Count.EqualTo(2));

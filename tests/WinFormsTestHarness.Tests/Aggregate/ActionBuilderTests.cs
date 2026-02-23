@@ -9,18 +9,26 @@ namespace WinFormsTestHarness.Tests.Aggregate;
 [TestFixture]
 public class ActionBuilderTests
 {
+    private const int ClickTimeoutMs = 300;
+    private const int DblClickTimeoutMs = 500;
+    private const int TextTimeoutMs = 500;
+
     private ActionBuilder _builder = null!;
 
     [SetUp]
     public void SetUp()
     {
         _builder = new ActionBuilder(
-            clickTimeoutMs: 300,
-            dblclickTimeoutMs: 500,
-            textTimeoutMs: 500);
+            clickTimeoutMs: ClickTimeoutMs,
+            dblclickTimeoutMs: DblClickTimeoutMs,
+            textTimeoutMs: TextTimeoutMs);
     }
 
-    private static string Ts(int ms) => $"2026-02-23T10:00:00.{ms:D3}Z";
+    private static string Ts(int ms)
+    {
+        var dt = new DateTimeOffset(2026, 2, 23, 10, 0, 0, TimeSpan.Zero).AddMilliseconds(ms);
+        return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+    }
 
     private static string MouseLine(string action, int ms, int sx = 100, int sy = 200, int rx = 50, int ry = 100, bool drag = false, int? delta = null)
     {

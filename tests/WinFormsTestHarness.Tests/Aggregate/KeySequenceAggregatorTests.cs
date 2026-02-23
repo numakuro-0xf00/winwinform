@@ -17,7 +17,11 @@ public class KeySequenceAggregatorTests
         _aggregator = new KeySequenceAggregator(textTimeoutMs: TextTimeoutMs);
     }
 
-    private static string Ts(int ms) => $"2026-02-23T10:00:00.{ms:D3}Z";
+    private static string Ts(int ms)
+    {
+        var dt = new DateTimeOffset(2026, 2, 23, 10, 0, 0, TimeSpan.Zero).AddMilliseconds(ms);
+        return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+    }
 
     private static RawKeyEvent Key(string action, int ms, string key, string? ch = null, int vk = 0, string? modifier = null) => new()
     {
@@ -89,20 +93,30 @@ public class KeySequenceAggregatorTests
     }
 
     [Test]
-    public void テキスト入力タイムアウトで分割される()
+    public void テキスト入力_ちょうどTextTimeout_分割されない()
     {
+        // 境界値: ちょうど TextTimeoutMs (500ms) → 分割されない（> 判定）
         var results = new List<AggregatedAction>();
         results.AddRange(_aggregator.ProcessEvent(Key("down", 0, "A", "a")));
-        results.AddRange(_aggregator.ProcessEvent(Key("down", 50, "B", "b")));
-        // TextTimeout (500ms) を超過した次のキー
-        results.AddRange(_aggregator.ProcessEvent(Key("down", TextTimeoutMs + 100, "C", "c")));
+        results.AddRange(_aggregator.ProcessEvent(Key("down", TextTimeoutMs, "B", "b")));
+        results.AddRange(_aggregator.Flush());
+
+        Assert.That(results, Has.Count.EqualTo(1));
+        Assert.That(results[0].Text, Is.EqualTo("ab"));
+    }
+
+    [Test]
+    public void テキスト入力_TextTimeoutを1ms超過_分割される()
+    {
+        // 境界値: TextTimeoutMs + 1 (501ms) → 分割される（> 判定）
+        var results = new List<AggregatedAction>();
+        results.AddRange(_aggregator.ProcessEvent(Key("down", 0, "A", "a")));
+        results.AddRange(_aggregator.ProcessEvent(Key("down", TextTimeoutMs + 1, "B", "b")));
         results.AddRange(_aggregator.Flush());
 
         Assert.That(results, Has.Count.EqualTo(2));
-        Assert.That(results[0].Type, Is.EqualTo("TextInput"));
-        Assert.That(results[0].Text, Is.EqualTo("ab"));
-        Assert.That(results[1].Type, Is.EqualTo("TextInput"));
-        Assert.That(results[1].Text, Is.EqualTo("c"));
+        Assert.That(results[0].Text, Is.EqualTo("a"));
+        Assert.That(results[1].Text, Is.EqualTo("b"));
     }
 
     [TestCase("Tab")]
