@@ -412,16 +412,21 @@ private static object? MaskValue(object? value)
 ### 8.2 パイプ名の解決
 
 ```
-パイプ名: WinFormsTestHarness_{pid}
+パイプ名: WinFormsTestHarness_{pid}_{sessionNonce}
   {pid} = Recording Engine のプロセスID
+  {sessionNonce} = Recording Engine 起動時に生成する128bit乱数（hex）
 
 解決順序:
-  1. LoggerConfig.RecordingEnginePid（明示指定）
-  2. 環境変数 WFTH_RECORDER_PID（Recording Engine が起動時に設定）
+  1. LoggerConfig.PipeName（完全なパイプ名を明示指定）
+  2. 環境変数 WFTH_PIPE_NAME（Recording Engine が起動時に設定）
   3. どちらもない場合 → IPC 無効、ファイルのみモード
 ```
 
-### 8.3 時刻同期ハンドシェイク
+### 8.3 セキュリティハンドシェイク
+
+接続直後、時刻同期の**前に**セキュリティハンドシェイク（hello/challenge/response）を実施する。詳細は `recording-integration-design.md`「接続保護（必須）」セクションを参照。sessionNonce と別に共有された sessionToken を検証し、失敗時は即切断する。
+
+### 8.4 時刻同期ハンドシェイク
 
 `recording-integration-design.md` のプロトコルに従う:
 
