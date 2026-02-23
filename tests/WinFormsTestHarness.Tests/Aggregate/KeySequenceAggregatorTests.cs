@@ -7,12 +7,14 @@ namespace WinFormsTestHarness.Tests.Aggregate;
 [TestFixture]
 public class KeySequenceAggregatorTests
 {
+    private const int TextTimeoutMs = 500;
+
     private KeySequenceAggregator _aggregator = null!;
 
     [SetUp]
     public void SetUp()
     {
-        _aggregator = new KeySequenceAggregator(textTimeoutMs: 500);
+        _aggregator = new KeySequenceAggregator(textTimeoutMs: TextTimeoutMs);
     }
 
     private static string Ts(int ms) => $"2026-02-23T10:00:00.{ms:D3}Z";
@@ -38,10 +40,13 @@ public class KeySequenceAggregatorTests
         results.AddRange(_aggregator.Flush());
 
         Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Type, Is.EqualTo("TextInput"));
-        Assert.That(results[0].Text, Is.EqualTo("abc"));
-        Assert.That(results[0].StartTs, Is.EqualTo(Ts(0)));
-        Assert.That(results[0].EndTs, Is.EqualTo(Ts(100)));
+        Assert.Multiple(() =>
+        {
+            Assert.That(results[0].Type, Is.EqualTo("TextInput"));
+            Assert.That(results[0].Text, Is.EqualTo("abc"));
+            Assert.That(results[0].StartTs, Is.EqualTo(Ts(0)));
+            Assert.That(results[0].EndTs, Is.EqualTo(Ts(100)));
+        });
     }
 
     [Test]
@@ -89,8 +94,8 @@ public class KeySequenceAggregatorTests
         var results = new List<AggregatedAction>();
         results.AddRange(_aggregator.ProcessEvent(Key("down", 0, "A", "a")));
         results.AddRange(_aggregator.ProcessEvent(Key("down", 50, "B", "b")));
-        // 600ms 後の次のキー（500ms timeout 超過）
-        results.AddRange(_aggregator.ProcessEvent(Key("down", 650, "C", "c")));
+        // TextTimeout (500ms) を超過した次のキー
+        results.AddRange(_aggregator.ProcessEvent(Key("down", TextTimeoutMs + 100, "C", "c")));
         results.AddRange(_aggregator.Flush());
 
         Assert.That(results, Has.Count.EqualTo(2));
@@ -100,40 +105,22 @@ public class KeySequenceAggregatorTests
         Assert.That(results[1].Text, Is.EqualTo("c"));
     }
 
-    [Test]
-    public void Tab_SpecialKeyが生成される()
+    [TestCase("Tab")]
+    [TestCase("Escape")]
+    [TestCase("F1")]
+    [TestCase("Delete")]
+    [TestCase("Backspace")]
+    [TestCase("Home")]
+    [TestCase("PageUp")]
+    public void SpecialKeyが押されたときSpecialKeyアクションが生成される(string key)
     {
         var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Key("down", 0, "Tab")));
+        results.AddRange(_aggregator.ProcessEvent(Key("down", 0, key)));
         results.AddRange(_aggregator.Flush());
 
         Assert.That(results, Has.Count.EqualTo(1));
         Assert.That(results[0].Type, Is.EqualTo("SpecialKey"));
-        Assert.That(results[0].Key, Is.EqualTo("Tab"));
-    }
-
-    [Test]
-    public void Escape_SpecialKeyが生成される()
-    {
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Key("down", 0, "Escape")));
-        results.AddRange(_aggregator.Flush());
-
-        Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Type, Is.EqualTo("SpecialKey"));
-        Assert.That(results[0].Key, Is.EqualTo("Escape"));
-    }
-
-    [Test]
-    public void F1_SpecialKeyが生成される()
-    {
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Key("down", 0, "F1")));
-        results.AddRange(_aggregator.Flush());
-
-        Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Type, Is.EqualTo("SpecialKey"));
-        Assert.That(results[0].Key, Is.EqualTo("F1"));
+        Assert.That(results[0].Key, Is.EqualTo(key));
     }
 
     [Test]
@@ -146,10 +133,13 @@ public class KeySequenceAggregatorTests
         results.AddRange(_aggregator.Flush());
 
         Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Sx, Is.EqualTo(450));
-        Assert.That(results[0].Sy, Is.EqualTo(320));
-        Assert.That(results[0].Rx, Is.EqualTo(230));
-        Assert.That(results[0].Ry, Is.EqualTo(180));
+        Assert.Multiple(() =>
+        {
+            Assert.That(results[0].Sx, Is.EqualTo(450));
+            Assert.That(results[0].Sy, Is.EqualTo(320));
+            Assert.That(results[0].Rx, Is.EqualTo(230));
+            Assert.That(results[0].Ry, Is.EqualTo(180));
+        });
     }
 
     [Test]
@@ -162,8 +152,13 @@ public class KeySequenceAggregatorTests
         results.AddRange(_aggregator.Flush());
 
         Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Sx, Is.EqualTo(450));
-        Assert.That(results[0].Ry, Is.EqualTo(180));
+        Assert.Multiple(() =>
+        {
+            Assert.That(results[0].Sx, Is.EqualTo(450));
+            Assert.That(results[0].Sy, Is.EqualTo(320));
+            Assert.That(results[0].Rx, Is.EqualTo(230));
+            Assert.That(results[0].Ry, Is.EqualTo(180));
+        });
     }
 
     [Test]
@@ -178,15 +173,16 @@ public class KeySequenceAggregatorTests
     }
 
     [Test]
-    public void Delete_Backspace_SpecialKeyが生成される()
+    public void CtrlA後の通常入力がテキストバッファを汚染しない()
     {
         var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Key("down", 0, "Delete")));
-        results.AddRange(_aggregator.ProcessEvent(Key("down", 100, "Backspace")));
+        results.AddRange(_aggregator.ProcessEvent(Key("down", 0, "Control")));
+        results.AddRange(_aggregator.ProcessEvent(Key("down", 10, "A", null))); // Ctrl+A
+        results.AddRange(_aggregator.ProcessEvent(Key("down", 100, "H", "h")));
+        results.AddRange(_aggregator.ProcessEvent(Key("down", 150, "I", "i")));
         results.AddRange(_aggregator.Flush());
 
-        Assert.That(results, Has.Count.EqualTo(2));
-        Assert.That(results[0].Key, Is.EqualTo("Delete"));
-        Assert.That(results[1].Key, Is.EqualTo("Backspace"));
+        Assert.That(results, Has.Count.EqualTo(1));
+        Assert.That(results[0].Text, Is.EqualTo("hi"));
     }
 }

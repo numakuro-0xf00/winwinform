@@ -183,16 +183,14 @@ public class ActionBuilderTests
             PassthroughLine("session", 900, "\"action\":\"stop\"")
         );
 
-        Assert.That(results.Count, Is.GreaterThanOrEqualTo(4));
-        // session start
+        // session(start), Click, TextInput("hi"), SpecialKey(Enter), session(stop) = 5件
+        Assert.That(results, Has.Count.EqualTo(5));
         Assert.That(results[0].GetProperty("type").GetString(), Is.EqualTo("session"));
-        // Click (dblclick-timeout 後に確定)
         Assert.That(results[1].GetProperty("type").GetString(), Is.EqualTo("Click"));
-        // TextInput "hi"
         Assert.That(results[2].GetProperty("type").GetString(), Is.EqualTo("TextInput"));
         Assert.That(results[2].GetProperty("text").GetString(), Is.EqualTo("hi"));
-        // SpecialKey Enter
         Assert.That(results[3].GetProperty("type").GetString(), Is.EqualTo("SpecialKey"));
+        Assert.That(results[4].GetProperty("type").GetString(), Is.EqualTo("session"));
     }
 
     [Test]

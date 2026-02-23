@@ -30,7 +30,16 @@ public class MouseClickAggregator
     /// </summary>
     public IEnumerable<AggregatedAction> ProcessEvent(RawMouseEvent e)
     {
-        // 現在時刻でタイムアウトチェック
+        // PendingUp + LeftUp の場合は DoubleClick 判定を優先する
+        // （CheckTimeouts が pendingClick をフラッシュする前に判定する必要がある）
+        if (_state == State.PendingUp && e.Action == "LeftUp")
+        {
+            foreach (var action in HandlePendingUp(e))
+                yield return action;
+            yield break;
+        }
+
+        // その他のイベントではタイムアウトチェックを先に実行
         foreach (var action in CheckTimeouts(e.Ts!))
             yield return action;
 

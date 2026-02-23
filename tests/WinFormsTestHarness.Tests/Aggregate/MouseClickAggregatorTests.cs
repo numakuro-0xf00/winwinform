@@ -7,12 +7,17 @@ namespace WinFormsTestHarness.Tests.Aggregate;
 [TestFixture]
 public class MouseClickAggregatorTests
 {
+    private const int ClickTimeoutMs = 300;
+    private const int DblClickTimeoutMs = 500;
+
     private MouseClickAggregator _aggregator = null!;
 
     [SetUp]
     public void SetUp()
     {
-        _aggregator = new MouseClickAggregator(clickTimeoutMs: 300, dblclickTimeoutMs: 500);
+        _aggregator = new MouseClickAggregator(
+            clickTimeoutMs: ClickTimeoutMs,
+            dblclickTimeoutMs: DblClickTimeoutMs);
     }
 
     private static string Ts(int ms) => $"2026-02-23T10:00:00.{ms:D3}Z";
@@ -39,24 +44,41 @@ public class MouseClickAggregatorTests
         results.AddRange(_aggregator.Flush());
 
         Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Type, Is.EqualTo("Click"));
-        Assert.That(results[0].Button, Is.EqualTo("Left"));
-        Assert.That(results[0].Sx, Is.EqualTo(100));
-        Assert.That(results[0].Sy, Is.EqualTo(200));
-        Assert.That(results[0].Rx, Is.EqualTo(50));
-        Assert.That(results[0].Ry, Is.EqualTo(100));
+        var click = results[0];
+        Assert.Multiple(() =>
+        {
+            Assert.That(click.Type, Is.EqualTo("Click"));
+            Assert.That(click.Button, Is.EqualTo("Left"));
+            Assert.That(click.Sx, Is.EqualTo(100));
+            Assert.That(click.Sy, Is.EqualTo(200));
+            Assert.That(click.Rx, Is.EqualTo(50));
+            Assert.That(click.Ry, Is.EqualTo(100));
+        });
     }
 
     [Test]
-    public void LeftDown_LeftUp_400ms超過_Clickにならない()
+    public void LeftDown_LeftUp_ちょうどClickTimeout_Clickが生成される()
     {
+        // 境界値: ちょうど ClickTimeoutMs (300ms) → Click になる（<= 判定）
         var results = new List<AggregatedAction>();
         results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 400)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", ClickTimeoutMs)));
         results.AddRange(_aggregator.Flush());
 
-        // click-timeout(300ms) を超過しているので Click にならない
-        Assert.That(results, Has.Count.EqualTo(0));
+        Assert.That(results, Has.Count.EqualTo(1));
+        Assert.That(results[0].Type, Is.EqualTo("Click"));
+    }
+
+    [Test]
+    public void LeftDown_LeftUp_ClickTimeout超過_集約されずドロップされる()
+    {
+        // click-timeout(300ms) を超過した長押し操作は集約対象外としてドロップされる
+        var results = new List<AggregatedAction>();
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", ClickTimeoutMs + 100)));
+        results.AddRange(_aggregator.Flush());
+
+        Assert.That(results, Is.Empty);
     }
 
     [Test]
@@ -70,47 +92,70 @@ public class MouseClickAggregatorTests
         results.AddRange(_aggregator.Flush());
 
         Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Type, Is.EqualTo("DragAndDrop"));
-        Assert.That(results[0].StartSx, Is.EqualTo(100));
-        Assert.That(results[0].StartSy, Is.EqualTo(200));
-        Assert.That(results[0].EndSx, Is.EqualTo(300));
-        Assert.That(results[0].EndSy, Is.EqualTo(400));
-        Assert.That(results[0].StartRx, Is.EqualTo(50));
-        Assert.That(results[0].StartRy, Is.EqualTo(100));
-        Assert.That(results[0].EndRx, Is.EqualTo(250));
-        Assert.That(results[0].EndRy, Is.EqualTo(300));
+        var drag = results[0];
+        Assert.Multiple(() =>
+        {
+            Assert.That(drag.Type, Is.EqualTo("DragAndDrop"));
+            Assert.That(drag.StartSx, Is.EqualTo(100));
+            Assert.That(drag.StartSy, Is.EqualTo(200));
+            Assert.That(drag.EndSx, Is.EqualTo(300));
+            Assert.That(drag.EndSy, Is.EqualTo(400));
+            Assert.That(drag.StartRx, Is.EqualTo(50));
+            Assert.That(drag.StartRy, Is.EqualTo(100));
+            Assert.That(drag.EndRx, Is.EqualTo(250));
+            Assert.That(drag.EndRy, Is.EqualTo(300));
+        });
     }
 
     [Test]
-    public void 連続2回Click_300ms間隔_DoubleClickが生成される()
+    public void 連続2回Click_DblClickTimeout以内_DoubleClickが生成される()
     {
         var results = new List<AggregatedAction>();
 
         // 1回目のクリック
         results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
         results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 50)));
-        // 2回目のクリック（300ms 間隔）
+        // 2回目のクリック（DblClickTimeout 以内: 300ms < 500ms）
         results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 300)));
         results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 350)));
         results.AddRange(_aggregator.Flush());
 
         Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Type, Is.EqualTo("DoubleClick"));
-        Assert.That(results[0].Button, Is.EqualTo("Left"));
+        Assert.Multiple(() =>
+        {
+            Assert.That(results[0].Type, Is.EqualTo("DoubleClick"));
+            Assert.That(results[0].Button, Is.EqualTo("Left"));
+        });
     }
 
     [Test]
-    public void 連続2回Click_600ms間隔_個別のClickが2つ生成される()
+    public void 連続2回Click_ちょうどDblClickTimeout_DoubleClickが生成される()
+    {
+        // 境界値: ちょうど DblClickTimeoutMs (500ms) → DoubleClick になる（<= 判定）
+        var results = new List<AggregatedAction>();
+
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 50)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", DblClickTimeoutMs)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", DblClickTimeoutMs + 50)));
+        results.AddRange(_aggregator.Flush());
+
+        Assert.That(results, Has.Count.EqualTo(1));
+        Assert.That(results[0].Type, Is.EqualTo("DoubleClick"));
+    }
+
+    [Test]
+    public void 連続2回Click_DblClickTimeout超過_個別のClickが2つ生成される()
     {
         var results = new List<AggregatedAction>();
 
         // 1回目のクリック
         results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
         results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 50)));
-        // 2回目のクリック（600ms 間隔 > dblclick-timeout 500ms）
+        // 2回目のクリック（DblClickTimeout 超過: 600ms > 500ms）
         // DoubleClick 待ちタイムアウトは次イベントの CheckTimeouts で発動
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 600)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 650)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", DblClickTimeoutMs + 100)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", DblClickTimeoutMs + 150)));
         results.AddRange(_aggregator.Flush());
 
         Assert.That(results, Has.Count.EqualTo(2));
@@ -139,10 +184,13 @@ public class MouseClickAggregatorTests
         results.AddRange(_aggregator.Flush());
 
         Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Type, Is.EqualTo("WheelScroll"));
-        Assert.That(results[0].Direction, Is.EqualTo("Up"));
-        Assert.That(results[0].Delta, Is.EqualTo(120));
-        Assert.That(results[0].Count, Is.EqualTo(1));
+        Assert.Multiple(() =>
+        {
+            Assert.That(results[0].Type, Is.EqualTo("WheelScroll"));
+            Assert.That(results[0].Direction, Is.EqualTo("Up"));
+            Assert.That(results[0].Delta, Is.EqualTo(120));
+            Assert.That(results[0].Count, Is.EqualTo(1));
+        });
     }
 
     [Test]
@@ -197,9 +245,29 @@ public class MouseClickAggregatorTests
 
         Assert.That(results, Has.Count.EqualTo(1));
         // Down 時の座標がアクション座標
-        Assert.That(results[0].Sx, Is.EqualTo(450));
-        Assert.That(results[0].Sy, Is.EqualTo(320));
-        Assert.That(results[0].Rx, Is.EqualTo(230));
-        Assert.That(results[0].Ry, Is.EqualTo(180));
+        Assert.Multiple(() =>
+        {
+            Assert.That(results[0].Sx, Is.EqualTo(450));
+            Assert.That(results[0].Sy, Is.EqualTo(320));
+            Assert.That(results[0].Rx, Is.EqualTo(230));
+            Assert.That(results[0].Ry, Is.EqualTo(180));
+        });
+    }
+
+    [Test]
+    public void Dragging中にRightDown_ドラッグが中断されイベントがドロップされる()
+    {
+        // Dragging 中の予期しないイベントでドラッグが中断され、
+        // 不完全なジェスチャーとしてドロップされる
+        var results = new List<AggregatedAction>();
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0, sx: 100, sy: 200)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("Move", 50, sx: 200, sy: 300, drag: true)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("RightDown", 100, sx: 200, sy: 300)));
+        // ドラッグ中断後 Idle に戻る。RightDown は Idle の default で無視される。
+        // RightUp も Idle の default で無視される。
+        results.AddRange(_aggregator.ProcessEvent(Mouse("RightUp", 150, sx: 200, sy: 300)));
+        results.AddRange(_aggregator.Flush());
+
+        Assert.That(results, Is.Empty);
     }
 }
