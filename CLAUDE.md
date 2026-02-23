@@ -83,6 +83,10 @@ git push -u origin feature/my-feature
 gh pr create --title "タイトル" --body "説明"
 ```
 
+## C# コードナビゲーション
+
+- `.cs` ファイルを変更する際は、事前に `/roslyn-query` を使用してシンボルの定義・参照・呼び出し階層を確認すること
+
 ## Development Notes
 
 - このリポジトリはPhase 1（Recording & 回帰テスト生成）の実装が主目標
