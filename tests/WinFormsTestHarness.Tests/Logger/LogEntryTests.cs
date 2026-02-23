@@ -1,29 +1,30 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using NUnit.Framework;
 using WinFormsTestHarness.Logger.Models;
+using WinFormsTestHarness.Logger.Sinks;
 
 namespace WinFormsTestHarness.Tests.Logger;
 
 [TestFixture]
 public class LogEntryTests
 {
-    private static readonly JsonSerializerOptions s_jsonOptions = new()
-    {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
+    // プロダクションコードと同じ JsonSerializerOptions を使用
+    private static readonly JsonSerializerOptions s_jsonOptions = JsonFileLogSink.JsonOptions;
 
     private const string TestTimestamp = "2026-02-23T12:00:00.000000Z";
 
     [Test]
     public void EventEntry_イベントログのJSON形式が正しい()
     {
+        // Arrange
         var info = new ControlInfo("btnOK", "Button", "MainForm", false);
-        var entry = LogEntry.EventEntry(info, "Click", TestTimestamp);
 
+        // Act
+        var entry = LogEntry.EventEntry(info, "Click", TestTimestamp);
         var json = JsonSerializer.Serialize(entry, s_jsonOptions);
         var doc = JsonDocument.Parse(json);
 
+        // Assert
         Assert.That(doc.RootElement.GetProperty("ts").GetString(), Is.EqualTo(TestTimestamp));
         Assert.That(doc.RootElement.GetProperty("type").GetString(), Is.EqualTo("event"));
         Assert.That(doc.RootElement.GetProperty("control").GetString(), Is.EqualTo("btnOK"));
@@ -34,12 +35,15 @@ public class LogEntryTests
     [Test]
     public void PropertyChanged_プロパティ変更ログのJSON形式が正しい()
     {
+        // Arrange
         var info = new ControlInfo("txtName", "TextBox", "MainForm", false);
-        var entry = LogEntry.PropertyChanged(info, "Text", "old", "new", false, TestTimestamp);
 
+        // Act
+        var entry = LogEntry.PropertyChanged(info, "Text", "old", "new", false, TestTimestamp);
         var json = JsonSerializer.Serialize(entry, s_jsonOptions);
         var doc = JsonDocument.Parse(json);
 
+        // Assert
         Assert.That(doc.RootElement.GetProperty("type").GetString(), Is.EqualTo("prop"));
         Assert.That(doc.RootElement.GetProperty("control").GetString(), Is.EqualTo("txtName"));
         Assert.That(doc.RootElement.GetProperty("prop").GetString(), Is.EqualTo("Text"));
@@ -51,15 +55,35 @@ public class LogEntryTests
     [Test]
     public void PropertyChanged_マスク有効時に値がマスクされる()
     {
+        // Arrange
         var info = new ControlInfo("txtPassword", "TextBox", "MainForm", true);
-        var entry = LogEntry.PropertyChanged(info, "Text", "secret", "newsecret", true, TestTimestamp);
 
+        // Act
+        var entry = LogEntry.PropertyChanged(info, "Text", "secret", "newsecret", true, TestTimestamp);
         var json = JsonSerializer.Serialize(entry, s_jsonOptions);
         var doc = JsonDocument.Parse(json);
 
+        // Assert
         Assert.That(doc.RootElement.GetProperty("old").ToString(), Is.EqualTo("***"));
         Assert.That(doc.RootElement.GetProperty("new").ToString(), Is.EqualTo("***"));
         Assert.That(doc.RootElement.GetProperty("masked").GetBoolean(), Is.True);
+    }
+
+    [Test]
+    public void PropertyChanged_マスク無効時は値がそのまま出力される()
+    {
+        // Arrange: IsPasswordField=true でも masked=false なら値はマスクされない
+        var info = new ControlInfo("txtPassword", "TextBox", "MainForm", true);
+
+        // Act
+        var entry = LogEntry.PropertyChanged(info, "Text", "old", "new", false, TestTimestamp);
+        var json = JsonSerializer.Serialize(entry, s_jsonOptions);
+        var doc = JsonDocument.Parse(json);
+
+        // Assert
+        Assert.That(doc.RootElement.GetProperty("old").ToString(), Is.EqualTo("old"));
+        Assert.That(doc.RootElement.GetProperty("new").ToString(), Is.EqualTo("new"));
+        Assert.That(doc.RootElement.TryGetProperty("masked", out _), Is.False);
     }
 
     [Test]
@@ -101,6 +125,8 @@ public class LogEntryTests
         Assert.That(doc.RootElement.GetProperty("message").GetString(), Is.EqualTo("テスト開始"));
     }
 
+    // --- Sanitize テスト ---
+
     [Test]
     public void Sanitize_nullはnullを返す()
     {
@@ -111,7 +137,9 @@ public class LogEntryTests
     public void Sanitize_Delegateは型名文字列に変換される()
     {
         Action action = () => { };
+
         var result = LogEntry.Sanitize(action);
+
         Assert.That(result, Does.StartWith("<").And.EndsWith(">"));
     }
 
@@ -119,13 +147,37 @@ public class LogEntryTests
     public void Sanitize_Typeはフル名に変換される()
     {
         var result = LogEntry.Sanitize(typeof(string));
+
         Assert.That(result, Is.EqualTo("System.String"));
+    }
+
+    [Test]
+    public void Sanitize_500文字ちょうどはトランケートされない()
+    {
+        var str500 = new string('a', 500);
+
+        var result = LogEntry.Sanitize(str500) as string;
+
+        Assert.That(result, Is.EqualTo(str500));
+        Assert.That(result!.Length, Is.EqualTo(500));
+    }
+
+    [Test]
+    public void Sanitize_501文字はトランケートされる()
+    {
+        var str501 = new string('a', 501);
+
+        var result = LogEntry.Sanitize(str501) as string;
+
+        Assert.That(result!.Length, Is.EqualTo(503)); // 500 + "..."
+        Assert.That(result, Does.EndWith("..."));
     }
 
     [Test]
     public void Sanitize_長い文字列は500文字でトランケートされる()
     {
         var longString = new string('a', 600);
+
         var result = LogEntry.Sanitize(longString) as string;
 
         Assert.That(result, Is.Not.Null);
@@ -137,8 +189,24 @@ public class LogEntryTests
     public void Sanitize_短い文字列はそのまま返る()
     {
         var result = LogEntry.Sanitize("hello");
+
         Assert.That(result, Is.EqualTo("hello"));
     }
+
+    private sealed class NullToStringObject
+    {
+        public override string? ToString() => null;
+    }
+
+    [Test]
+    public void Sanitize_ToStringがnullを返すオブジェクトではnullを返す()
+    {
+        var result = LogEntry.Sanitize(new NullToStringObject());
+
+        Assert.That(result, Is.Null);
+    }
+
+    // --- MaskValue テスト ---
 
     [Test]
     public void MaskValue_nullはnullを返す()
@@ -152,6 +220,8 @@ public class LogEntryTests
         Assert.That(LogEntry.MaskValue("secret"), Is.EqualTo("***"));
         Assert.That(LogEntry.MaskValue(12345), Is.EqualTo("***"));
     }
+
+    // --- null フィールド省略テスト ---
 
     [Test]
     public void FormOpen_オーナーなしの場合ownerフィールドが省略される()
@@ -173,7 +243,6 @@ public class LogEntryTests
         var json = JsonSerializer.Serialize(entry, s_jsonOptions);
         var doc = JsonDocument.Parse(json);
 
-        // null フィールドは省略される
         Assert.That(doc.RootElement.TryGetProperty("control", out _), Is.False);
         Assert.That(doc.RootElement.TryGetProperty("event", out _), Is.False);
         Assert.That(doc.RootElement.TryGetProperty("prop", out _), Is.False);

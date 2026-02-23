@@ -10,7 +10,7 @@ namespace WinFormsTestHarness.Logger.Sinks;
 /// </summary>
 internal sealed class JsonFileLogSink : ILogSink
 {
-    private static readonly JsonSerializerOptions s_jsonOptions = new()
+    internal static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
@@ -21,6 +21,7 @@ internal sealed class JsonFileLogSink : ILogSink
     private StreamWriter? _writer;
     private long _currentFileSize;
     private int _rotationIndex;
+    internal string CurrentFilePath => _currentFilePath;
     private string _currentFilePath;
 
     internal JsonFileLogSink(string? filePath, long maxFileSize)
@@ -45,7 +46,7 @@ internal sealed class JsonFileLogSink : ILogSink
         {
             if (_writer == null) return;
 
-            var json = JsonSerializer.Serialize(entry, s_jsonOptions);
+            var json = JsonSerializer.Serialize(entry, JsonOptions);
             _writer.WriteLine(json);
             _currentFileSize += json.Length + Environment.NewLine.Length;
 

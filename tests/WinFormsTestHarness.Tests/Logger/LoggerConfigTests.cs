@@ -25,6 +25,15 @@ public class LoggerConfigTests
     }
 
     [Test]
+    public void Default_呼び出しごとに新しいインスタンスを返す()
+    {
+        var config1 = LoggerConfig.Default;
+        var config2 = LoggerConfig.Default;
+
+        Assert.That(config1, Is.Not.SameAs(config2));
+    }
+
+    [Test]
     public void プロパティを変更できる()
     {
         var config = new LoggerConfig

@@ -32,4 +32,12 @@ public class ControlInfoTests
 
         Assert.That(info.FormName, Is.Null);
     }
+
+    [Test]
+    public void コンストラクタ_名前が空文字列でも正常に動作する()
+    {
+        var info = new ControlInfo("", "Button", "MainForm", false);
+
+        Assert.That(info.Name, Is.EqualTo(""));
+    }
 }

@@ -28,17 +28,20 @@ public class JsonFileLogSinkTests
     [Test]
     public void Write_NDJSONフォーマットでファイルに出力される()
     {
+        // Arrange
         var filePath = Path.Combine(_testDir, "test.ndjson");
+
+        // Act
         using (var sink = new JsonFileLogSink(filePath, maxFileSize: 1024 * 1024))
         {
             sink.Write(LogEntry.Custom("message1", TestTimestamp));
             sink.Write(LogEntry.EventEntry(new ControlInfo("btn", "Button", "Form1", false), "Click", TestTimestamp));
         }
 
+        // Assert
         var lines = File.ReadAllLines(filePath);
         Assert.That(lines.Length, Is.EqualTo(2));
 
-        // 各行が有効な JSON であることを確認
         var doc1 = JsonDocument.Parse(lines[0]);
         Assert.That(doc1.RootElement.GetProperty("type").GetString(), Is.EqualTo("custom"));
         Assert.That(doc1.RootElement.GetProperty("message").GetString(), Is.EqualTo("message1"));
@@ -49,57 +52,96 @@ public class JsonFileLogSinkTests
     }
 
     [Test]
-    public void ファイルローテーション_最大サイズ超過で新ファイルに切り替わる()
+    public void ファイルローテーション_最大サイズ超過でデータロストなく新ファイルに切り替わる()
     {
+        // Arrange
         var filePath = Path.Combine(_testDir, "rotate.ndjson");
-        // 非常に小さい maxFileSize を設定してローテーションを発生させる
+
+        // Act
         using (var sink = new JsonFileLogSink(filePath, maxFileSize: 50))
         {
-            sink.Write(LogEntry.Custom("first message that is long enough", TestTimestamp));
-            sink.Write(LogEntry.Custom("second message after rotation", TestTimestamp));
+            sink.Write(LogEntry.Custom("first", TestTimestamp));
+            sink.Write(LogEntry.Custom("second", TestTimestamp));
         }
 
-        // 元のファイルとローテーションされたファイルが存在するか確認
-        var files = Directory.GetFiles(_testDir, "rotate*.ndjson");
-        Assert.That(files.Length, Is.GreaterThanOrEqualTo(2));
+        // Assert
+        var files = Directory.GetFiles(_testDir, "rotate*.ndjson").OrderBy(f => f).ToArray();
+        Assert.That(files.Length, Is.GreaterThanOrEqualTo(2),
+            "ローテーションにより複数ファイルが存在すべき");
+
+        var totalLines = files.Sum(f => File.ReadAllLines(f).Length);
+        Assert.That(totalLines, Is.EqualTo(2),
+            "ローテーション後もデータが失われてはならない");
     }
 
     [Test]
-    public void IsConnected_作成直後はtrueでDispose後は接続なし()
+    public void IsConnected_作成直後はtrueでDispose後はfalse()
     {
+        // Arrange
         var filePath = Path.Combine(_testDir, "connected.ndjson");
         var sink = new JsonFileLogSink(filePath, maxFileSize: 1024 * 1024);
 
+        // Assert
         Assert.That(sink.IsConnected, Is.True);
 
+        // Act
         sink.Dispose();
-        // Dispose 後は writer が null なので IsConnected は false
+
+        // Assert
         Assert.That(sink.IsConnected, Is.False);
     }
 
     [Test]
     public void デフォルトパス_指定なしの場合自動生成される()
     {
-        // null パスで作成 → %TEMP% に自動生成されること
-        using var sink = new JsonFileLogSink(null, maxFileSize: 1024 * 1024);
+        // Arrange & Act
+        string? generatedPath;
+        using (var sink = new JsonFileLogSink(null, maxFileSize: 1024 * 1024))
+        {
+            Assert.That(sink.IsConnected, Is.True);
+            sink.Write(LogEntry.Custom("auto_path_test", TestTimestamp));
+            generatedPath = sink.CurrentFilePath;
+        }
 
-        Assert.That(sink.IsConnected, Is.True);
-        sink.Write(LogEntry.Custom("auto_path_test", TestTimestamp));
+        // TearDown: 自動生成されたファイルをクリーンアップ
+        if (generatedPath != null && File.Exists(generatedPath))
+        {
+            var dir = Path.GetDirectoryName(generatedPath);
+            File.Delete(generatedPath);
+            if (dir != null && Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
+                Directory.Delete(dir);
+        }
     }
 
     [Test]
     public void NullフィールドがJSONに含まれない()
     {
+        // Arrange
         var filePath = Path.Combine(_testDir, "null_fields.ndjson");
+
+        // Act
         using (var sink = new JsonFileLogSink(filePath, maxFileSize: 1024 * 1024))
         {
             sink.Write(LogEntry.Custom("test", TestTimestamp));
         }
 
+        // Assert
         var json = File.ReadAllText(filePath).Trim();
         var doc = JsonDocument.Parse(json);
 
         Assert.That(doc.RootElement.TryGetProperty("control", out _), Is.False);
         Assert.That(doc.RootElement.TryGetProperty("event", out _), Is.False);
+    }
+
+    [Test]
+    public void Dispose後のWriteは例外をスローしない()
+    {
+        // Arrange
+        var filePath = Path.Combine(_testDir, "disposed.ndjson");
+        var sink = new JsonFileLogSink(filePath, maxFileSize: 1024 * 1024);
+        sink.Dispose();
+
+        // Act & Assert
+        Assert.DoesNotThrow(() => sink.Write(LogEntry.Custom("after_dispose", TestTimestamp)));
     }
 }
