@@ -15,11 +15,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\WinFormsTestHarness.Common\WinFormsTestHarness.Common.csproj" />
+    <ProjectReference Include="..\..\src\WinFormsTestHarness.Aggregate\WinFormsTestHarness.Aggregate.csproj" />
     <ProjectReference Include="..\..\src\WinFormsTestHarness.Capture\WinFormsTestHarness.Capture.csproj" />
-    <ProjectReference Include="..\..\src\WinFormsTestHarness.Record\WinFormsTestHarness.Record.csproj" />
-    <ProjectReference Include="..\..\src\WinFormsTestHarness.Logger\WinFormsTestHarness.Logger.csproj" />
+    <ProjectReference Include="..\..\src\WinFormsTestHarness.Common\WinFormsTestHarness.Common.csproj" />
     <ProjectReference Include="..\..\src\WinFormsTestHarness.Correlate\WinFormsTestHarness.Correlate.csproj" />
+    <ProjectReference Include="..\..\src\WinFormsTestHarness.Logger\WinFormsTestHarness.Logger.csproj" />
+    <ProjectReference Include="..\..\src\WinFormsTestHarness.Record\WinFormsTestHarness.Record.csproj" />
   </ItemGroup>
 
   <ItemGroup>
