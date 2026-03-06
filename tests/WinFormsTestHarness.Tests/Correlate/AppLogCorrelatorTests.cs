@@ -10,11 +10,7 @@ public class AppLogCorrelatorTests
 {
     private const int WindowMs = 2000;
 
-    private static string Ts(int ms)
-    {
-        var dt = new DateTimeOffset(2026, 2, 23, 10, 0, 0, TimeSpan.Zero).AddMilliseconds(ms);
-        return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
-    }
+    private static string Ts(int ms) => CorrelateTestHelper.Ts(ms);
 
     private static string ClickLine(int ms, int rx = 50, int ry = 100)
         => $"{{\"ts\":\"{Ts(ms)}\",\"type\":\"Click\",\"button\":\"Left\",\"sx\":100,\"sy\":200,\"rx\":{rx},\"ry\":{ry}}}";

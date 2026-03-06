@@ -274,4 +274,36 @@ public class MouseClickAggregatorTests
 
         Assert.That(results, Is.Empty);
     }
+
+    [Test]
+    public void RightDown保留中にLeftDown_RightDown破棄されLeftDown処理が開始する()
+    {
+        var results = new List<AggregatedAction>();
+        results.AddRange(_aggregator.ProcessEvent(Mouse("RightDown", 0, sx: 100, sy: 200, rx: 50, ry: 100)));
+        // RightDown 保留中に LeftDown → RightDown 破棄、PendingUp 状態に遷移
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 50, sx: 300, sy: 400, rx: 150, ry: 200)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 100, sx: 300, sy: 400, rx: 150, ry: 200)));
+        results.AddRange(_aggregator.Flush());
+
+        Assert.That(results, Has.Count.EqualTo(1));
+        Assert.Multiple(() =>
+        {
+            Assert.That(results[0].Type, Is.EqualTo("Click"));
+            Assert.That(results[0].Sx, Is.EqualTo(300));
+        });
+    }
+
+    [Test]
+    public void RightDown保留中にWheelUp_保留状態が破棄される()
+    {
+        // HandlePendingRightUp の default ブランチ: Idle に戻る
+        var results = new List<AggregatedAction>();
+        results.AddRange(_aggregator.ProcessEvent(Mouse("RightDown", 0)));
+        results.AddRange(_aggregator.ProcessEvent(Mouse("WheelUp", 50, delta: 120)));
+        results.AddRange(_aggregator.Flush());
+
+        // RightDown は破棄される。WheelUp は PendingRightUp の default で Idle に戻った後、
+        // 再処理されないため出力なし。
+        Assert.That(results, Is.Empty);
+    }
 }

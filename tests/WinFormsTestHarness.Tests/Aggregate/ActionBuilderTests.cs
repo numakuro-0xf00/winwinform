@@ -174,8 +174,14 @@ public class ActionBuilderTests
         Assert.That(results[0].GetProperty("type").GetString(), Is.EqualTo("Click"));
         Assert.That(results[1].GetProperty("type").GetString(), Is.EqualTo("TextInput"));
         Assert.That(results[1].GetProperty("text").GetString(), Is.EqualTo("ab"));
-        // キーアグリゲーターにクリック座標が伝播
-        Assert.That(results[1].GetProperty("sx").GetInt32(), Is.EqualTo(450));
+        // キーアグリゲーターにクリック座標が4成分全て伝播
+        Assert.Multiple(() =>
+        {
+            Assert.That(results[1].GetProperty("sx").GetInt32(), Is.EqualTo(450));
+            Assert.That(results[1].GetProperty("sy").GetInt32(), Is.EqualTo(320));
+            Assert.That(results[1].GetProperty("rx").GetInt32(), Is.EqualTo(230));
+            Assert.That(results[1].GetProperty("ry").GetInt32(), Is.EqualTo(180));
+        });
     }
 
     [Test]
