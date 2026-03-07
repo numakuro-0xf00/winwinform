@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using WinFormsTestHarness.Capture;
 using WinFormsTestHarness.Common.Cli;
 using WinFormsTestHarness.Common.IO;
 using WinFormsTestHarness.Common.Serialization;
@@ -32,6 +33,9 @@ public class RecordingSession : IDisposable
     private readonly HookHealthMonitor _hookHealth;
     private readonly AppHealthMonitor _appHealth;
 
+    private readonly CaptureStrategy? _captureStrategy;
+    private readonly ScreenCapturer? _screenCapturer;
+
     private long _seq;
     private CancellationTokenSource? _cts;
     private Task? _writerTask;
@@ -41,7 +45,8 @@ public class RecordingSession : IDisposable
         uint targetPid,
         string? targetProcess,
         NdJsonWriter writer,
-        DiagnosticContext diag)
+        DiagnosticContext diag,
+        CaptureSettings? captureSettings = null)
     {
         _targetHwnd = targetHwnd;
         _targetPid = targetPid;
@@ -64,6 +69,16 @@ public class RecordingSession : IDisposable
             new Win32AppHealthApi(),
             targetPid,
             targetHwnd);
+
+        if (captureSettings != null && captureSettings.Level != CaptureLevel.None)
+        {
+            _screenCapturer = new ScreenCapturer(targetHwnd, captureSettings.Options);
+            var diffDetector = new DiffDetector(captureSettings.DiffThreshold);
+            var fileWriter = new CaptureFileWriter(captureSettings.OutputDir);
+            _captureStrategy = new CaptureStrategy(
+                _screenCapturer, diffDetector, fileWriter,
+                captureSettings.Level, captureSettings.AfterDelayMs);
+        }
     }
 
     /// <summary>
@@ -159,10 +174,74 @@ public class RecordingSession : IDisposable
         {
             await foreach (var evt in _queue.ReadAllAsync(ct))
             {
+                var isTrigger = IsCaptureTriggeredBy(evt);
+                var triggerDesc = GetTriggerDescription(evt);
+
+                // before キャプチャ
+                if (isTrigger && _captureStrategy != null)
+                {
+                    var before = _captureStrategy.CaptureBeforeInput(triggerDesc);
+                    if (before != null)
+                    {
+                        EmitScreenshotEvent(before, "before", triggerDesc);
+                        before.Dispose();
+                    }
+                }
+
+                // 入力イベント出力
                 _writer.Write(JsonSerializer.Serialize(evt, evt.GetType(), JsonHelper.Options));
+
+                // after キャプチャ
+                if (isTrigger && _captureStrategy != null)
+                {
+                    var after = await _captureStrategy.CaptureAfterInputAsync(triggerDesc);
+                    if (after != null)
+                    {
+                        EmitScreenshotEvent(after, "after", triggerDesc);
+                        after.Dispose();
+                    }
+                }
             }
         }
         catch (OperationCanceledException) { }
+    }
+
+    private static bool IsCaptureTriggeredBy(InputEvent evt)
+    {
+        return evt switch
+        {
+            MouseEvent m => m.Action is "down" or "up",
+            KeyEvent k => k.Action == "down",
+            _ => false,
+        };
+    }
+
+    private static string GetTriggerDescription(InputEvent evt)
+    {
+        return evt switch
+        {
+            MouseEvent m => $"mouse_{m.Action}_{m.Button}",
+            KeyEvent k => $"key_{k.Action}_{k.KeyName}",
+            _ => "unknown",
+        };
+    }
+
+    private void EmitScreenshotEvent(CaptureResult result, string timing, string trigger)
+    {
+        var ssEvt = new ScreenshotEvent
+        {
+            Timestamp = result.Timestamp,
+            Timing = timing,
+            File = result.Skipped ? null : result.FilePath,
+            Width = result.Width,
+            Height = result.Height,
+            FileSize = result.FileSize,
+            DiffRatio = result.DiffRatio > 0 ? result.DiffRatio : null,
+            Skipped = result.Skipped ? true : null,
+            Trigger = trigger,
+            ReuseFrom = result.ReuseFrom,
+        };
+        _writer.Write(ssEvt);
     }
 
     private async Task MonitorLoop(CancellationToken ct)
@@ -259,6 +338,7 @@ public class RecordingSession : IDisposable
     {
         _mouseHook.Dispose();
         _keyboardHook.Dispose();
+        _screenCapturer?.Dispose();
         _cts?.Dispose();
     }
 }

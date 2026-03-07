@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\WinFormsTestHarness.Common\WinFormsTestHarness.Common.csproj" />
+    <ProjectReference Include="..\WinFormsTestHarness.Capture\WinFormsTestHarness.Capture.csproj" />
   </ItemGroup>
 
 </Project>

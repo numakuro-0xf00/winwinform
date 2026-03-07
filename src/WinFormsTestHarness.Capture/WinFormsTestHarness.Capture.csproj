@@ -2,10 +2,20 @@
 
   <PropertyGroup>
     <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\WinFormsTestHarness.Common\WinFormsTestHarness.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WinFormsTestHarness.Tests" />
   </ItemGroup>
 
 </Project>
