@@ -17,6 +17,11 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\WinFormsTestHarness.Common\WinFormsTestHarness.Common.csproj" />
     <ProjectReference Include="..\..\src\WinFormsTestHarness.Record\WinFormsTestHarness.Record.csproj" />
+    <ProjectReference Include="..\..\src\WinFormsTestHarness.Logger\WinFormsTestHarness.Logger.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WinFormsTestHarness.Tests" />
   </ItemGroup>
 
 </Project>

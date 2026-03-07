@@ -5,4 +5,8 @@
     <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="WinFormsTestHarness.Tests" />
+  </ItemGroup>
+
 </Project>

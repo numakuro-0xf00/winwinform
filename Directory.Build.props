@@ -9,4 +9,8 @@
   <PropertyGroup Condition="'$(Configuration)' == 'E2ETest'">
     <DefineConstants>$(DefineConstants);E2E_TEST</DefineConstants>
   </PropertyGroup>
+
+  <PropertyGroup Condition="'$(E2ETestEnabled)' == 'true'">
+    <DefineConstants>$(DefineConstants);E2E_TEST</DefineConstants>
+  </PropertyGroup>
 </Project>
