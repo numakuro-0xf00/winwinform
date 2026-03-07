@@ -14,4 +14,9 @@
     <PackageReference Include="coverlet.collector" Version="6.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\WinFormsTestHarness.Common\WinFormsTestHarness.Common.csproj" />
+    <ProjectReference Include="..\..\src\WinFormsTestHarness.Record\WinFormsTestHarness.Record.csproj" />
+  </ItemGroup>
+
 </Project>
