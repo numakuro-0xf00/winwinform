@@ -33,6 +33,12 @@ public class NdJsonWriter : IDisposable
         _writer.Flush();
     }
 
+    public void WriteRaw(string rawJson)
+    {
+        _writer.WriteLine(rawJson);
+        _writer.Flush();
+    }
+
     public void Dispose()
     {
         if (_ownsWriter)
