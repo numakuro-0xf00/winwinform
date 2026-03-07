@@ -2,6 +2,9 @@ using System.CommandLine;
 using System.CommandLine.Invocation;
 using WinFormsTestHarness.Aggregate.Aggregation;
 using WinFormsTestHarness.Common.Cli;
+using WinFormsTestHarness.Common.IO;
+
+var rootCommand = new RootCommand("wfth-aggregate -- 生イベント集約CLI");
 
 var textTimeoutOption = new Option<int>(
     "--text-timeout",
@@ -21,45 +24,39 @@ var dblclickTimeoutOption = new Option<int>(
 var debugOption = CommonOptions.Debug();
 var quietOption = CommonOptions.Quiet();
 
-var rootCommand = new RootCommand("wfth-aggregate — 生イベント集約（MouseDown+Up → Click, キー列 → TextInput 等）")
-{
-    textTimeoutOption,
-    clickTimeoutOption,
-    dblclickTimeoutOption,
-    debugOption,
-    quietOption,
-};
+rootCommand.AddOption(textTimeoutOption);
+rootCommand.AddOption(clickTimeoutOption);
+rootCommand.AddOption(dblclickTimeoutOption);
+rootCommand.AddGlobalOption(debugOption);
+rootCommand.AddGlobalOption(quietOption);
 
-rootCommand.SetHandler((InvocationContext context) =>
+rootCommand.SetHandler((InvocationContext ctx) =>
 {
-    var textTimeout = context.ParseResult.GetValueForOption(textTimeoutOption);
-    var clickTimeout = context.ParseResult.GetValueForOption(clickTimeoutOption);
-    var dblclickTimeout = context.ParseResult.GetValueForOption(dblclickTimeoutOption);
-    var debug = context.ParseResult.GetValueForOption(debugOption);
-    var quiet = context.ParseResult.GetValueForOption(quietOption);
+    var textTimeout = ctx.ParseResult.GetValueForOption(textTimeoutOption);
+    var clickTimeout = ctx.ParseResult.GetValueForOption(clickTimeoutOption);
+    var dblclickTimeout = ctx.ParseResult.GetValueForOption(dblclickTimeoutOption);
+    var debug = ctx.ParseResult.GetValueForOption(debugOption);
+    var quiet = ctx.ParseResult.GetValueForOption(quietOption);
 
     var diag = new DiagnosticContext(debug, quiet);
-    diag.DebugLog($"text-timeout={textTimeout}ms, click-timeout={clickTimeout}ms, dblclick-timeout={dblclickTimeout}ms");
-
-    if (Console.Out is StreamWriter sw)
-        sw.AutoFlush = true;
-
-    var builder = new ActionBuilder(
-        clickTimeoutMs: clickTimeout,
-        dblclickTimeoutMs: dblclickTimeout,
-        textTimeoutMs: textTimeout,
-        diag: diag);
 
     try
     {
-        builder.Process(Console.In, Console.Out);
-        context.ExitCode = ExitCodes.Success;
+        using var writer = NdJsonWriter.ToStdout();
+
+        var builder = new ActionBuilder(
+            Console.In, writer, diag,
+            clickTimeoutMs: clickTimeout,
+            dblclickTimeoutMs: dblclickTimeout,
+            textTimeoutMs: textTimeout);
+
+        ctx.ExitCode = builder.Run();
     }
     catch (Exception ex)
     {
-        DiagnosticContext.Error($"wfth-aggregate: {ex.Message}");
+        DiagnosticContext.Error($"予期しないエラー: {ex.Message}");
         diag.DebugLog(ex.ToString());
-        context.ExitCode = ExitCodes.RuntimeError;
+        ctx.ExitCode = ExitCodes.RuntimeError;
     }
 });
 

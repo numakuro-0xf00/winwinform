@@ -1,309 +1,214 @@
+using System.Text.Json;
 using NUnit.Framework;
 using WinFormsTestHarness.Aggregate.Aggregation;
 using WinFormsTestHarness.Aggregate.Models;
+using WinFormsTestHarness.Common.IO;
 
 namespace WinFormsTestHarness.Tests.Aggregate;
 
 [TestFixture]
 public class MouseClickAggregatorTests
 {
-    private const int ClickTimeoutMs = 300;
-    private const int DblClickTimeoutMs = 500;
-
-    private MouseClickAggregator _aggregator = null!;
+    private StringWriter _outputBuffer = null!;
+    private NdJsonWriter _writer = null!;
 
     [SetUp]
     public void SetUp()
     {
-        _aggregator = new MouseClickAggregator(
-            clickTimeoutMs: ClickTimeoutMs,
-            dblclickTimeoutMs: DblClickTimeoutMs);
+        _outputBuffer = new StringWriter();
+        _writer = new NdJsonWriter(_outputBuffer);
     }
 
-    private static string Ts(int ms)
+    [TearDown]
+    public void TearDown()
     {
-        var dt = new DateTimeOffset(2026, 2, 23, 10, 0, 0, TimeSpan.Zero).AddMilliseconds(ms);
-        return dt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+        _writer.Dispose();
+        _outputBuffer.Dispose();
     }
 
-    private static RawMouseEvent Mouse(string action, int ms, int sx = 100, int sy = 200, int rx = 50, int ry = 100, bool drag = false, int? delta = null) => new()
+    private List<JsonElement> GetOutputLines()
     {
-        Ts = Ts(ms),
-        Type = "mouse",
-        Action = action,
-        Sx = sx,
-        Sy = sy,
-        Rx = rx,
-        Ry = ry,
-        Drag = drag,
-        Delta = delta,
-    };
+        var text = _outputBuffer.ToString().TrimEnd();
+        if (string.IsNullOrEmpty(text))
+            return new List<JsonElement>();
 
-    [Test]
-    public void LeftDown_LeftUp_100ms以内_Clickが生成される()
+        return text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => JsonDocument.Parse(line).RootElement.Clone())
+            .ToList();
+    }
+
+    private static RawEvent MouseEvent(string action, string ts,
+        int sx = 100, int sy = 200, int rx = 50, int ry = 100)
     {
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 100)));
-        results.AddRange(_aggregator.Flush());
-
-        Assert.That(results, Has.Count.EqualTo(1));
-        var click = results[0];
-        Assert.Multiple(() =>
-        {
-            Assert.That(click.Type, Is.EqualTo("Click"));
-            Assert.That(click.Button, Is.EqualTo("Left"));
-            Assert.That(click.Sx, Is.EqualTo(100));
-            Assert.That(click.Sy, Is.EqualTo(200));
-            Assert.That(click.Rx, Is.EqualTo(50));
-            Assert.That(click.Ry, Is.EqualTo(100));
-        });
+        var json = $"{{\"ts\":\"{ts}\",\"type\":\"mouse\",\"action\":\"{action}\",\"sx\":{sx},\"sy\":{sy},\"rx\":{rx},\"ry\":{ry}}}";
+        return RawEvent.Parse(json)!;
     }
 
     [Test]
-    public void LeftDown_LeftUp_ちょうどClickTimeout_Clickが生成される()
+    public void LeftDown_LeftUp_100ms間隔_Clickを出力()
     {
-        // 境界値: ちょうど ClickTimeoutMs (300ms) → Click になる（<= 判定）
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", ClickTimeoutMs)));
-        results.AddRange(_aggregator.Flush());
+        var agg = new MouseClickAggregator(_writer);
 
-        Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Type, Is.EqualTo("Click"));
+        agg.Process(MouseEvent("LeftDown", "2026-01-01T00:00:00.000Z"));
+        agg.Process(MouseEvent("LeftUp", "2026-01-01T00:00:00.100Z"));
+        agg.Flush();
+
+        var lines = GetOutputLines();
+        Assert.That(lines, Has.Count.EqualTo(1));
+        Assert.That(lines[0].GetProperty("type").GetString(), Is.EqualTo("Click"));
+        Assert.That(lines[0].GetProperty("button").GetString(), Is.EqualTo("Left"));
+        Assert.That(lines[0].GetProperty("sx").GetInt32(), Is.EqualTo(100));
     }
 
     [Test]
-    public void LeftDown_LeftUp_ClickTimeoutを1ms超過_集約されずドロップされる()
+    public void LeftDown_LeftUp_400ms間隔_タイムアウトで分離出力()
     {
-        // 境界値: ClickTimeoutMs + 1 (301ms) → Click にならない（<= 判定）
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", ClickTimeoutMs + 1)));
-        results.AddRange(_aggregator.Flush());
+        var agg = new MouseClickAggregator(_writer, clickTimeoutMs: 300);
 
-        Assert.That(results, Is.Empty);
+        agg.Process(MouseEvent("LeftDown", "2026-01-01T00:00:00.000Z"));
+        // タイムアウト超過後に次のイベントでチェック
+        agg.CheckTimeout(DateTimeOffset.Parse("2026-01-01T00:00:00.400Z"));
+
+        var lines = GetOutputLines();
+        // タイムアウトで生イベントが出力される
+        Assert.That(lines, Has.Count.EqualTo(1));
+        Assert.That(lines[0].GetProperty("type").GetString(), Is.EqualTo("mouse"));
+        Assert.That(lines[0].GetProperty("action").GetString(), Is.EqualTo("LeftDown"));
     }
 
     [Test]
-    public void LeftDown_Move_Drag_LeftUp_DragAndDropが生成される()
+    public void 二回Click_300ms間隔_DoubleClickを出力()
     {
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0, sx: 100, sy: 200, rx: 50, ry: 100)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("Move", 50, sx: 150, sy: 250, rx: 100, ry: 150, drag: true)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("Move", 100, sx: 300, sy: 400, rx: 250, ry: 300, drag: true)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 150, sx: 300, sy: 400, rx: 250, ry: 300)));
-        results.AddRange(_aggregator.Flush());
+        var agg = new MouseClickAggregator(_writer, dblclickTimeoutMs: 500);
 
-        Assert.That(results, Has.Count.EqualTo(1));
-        var drag = results[0];
-        Assert.Multiple(() =>
-        {
-            Assert.That(drag.Type, Is.EqualTo("DragAndDrop"));
-            Assert.That(drag.StartSx, Is.EqualTo(100));
-            Assert.That(drag.StartSy, Is.EqualTo(200));
-            Assert.That(drag.EndSx, Is.EqualTo(300));
-            Assert.That(drag.EndSy, Is.EqualTo(400));
-            Assert.That(drag.StartRx, Is.EqualTo(50));
-            Assert.That(drag.StartRy, Is.EqualTo(100));
-            Assert.That(drag.EndRx, Is.EqualTo(250));
-            Assert.That(drag.EndRy, Is.EqualTo(300));
-        });
+        agg.Process(MouseEvent("LeftDown", "2026-01-01T00:00:00.000Z"));
+        agg.Process(MouseEvent("LeftUp", "2026-01-01T00:00:00.050Z"));
+        agg.Process(MouseEvent("LeftDown", "2026-01-01T00:00:00.300Z"));
+        agg.Process(MouseEvent("LeftUp", "2026-01-01T00:00:00.350Z"));
+        agg.Flush();
+
+        var lines = GetOutputLines();
+        Assert.That(lines, Has.Count.EqualTo(1));
+        Assert.That(lines[0].GetProperty("type").GetString(), Is.EqualTo("DoubleClick"));
+        Assert.That(lines[0].GetProperty("button").GetString(), Is.EqualTo("Left"));
     }
 
     [Test]
-    public void 連続2回Click_DblClickTimeout以内_DoubleClickが生成される()
+    public void LeftDown_Move_LeftUp_DragAndDropを出力()
     {
-        var results = new List<AggregatedAction>();
+        var agg = new MouseClickAggregator(_writer);
 
-        // 1回目のクリック
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 50)));
-        // 2回目のクリック（DblClickTimeout 以内: 300ms < 500ms）
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 300)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 350)));
-        results.AddRange(_aggregator.Flush());
+        agg.Process(MouseEvent("LeftDown", "2026-01-01T00:00:00.000Z", sx: 100, sy: 200));
+        agg.Process(MouseEvent("Move", "2026-01-01T00:00:00.050Z", sx: 150, sy: 250));
+        agg.Process(MouseEvent("LeftUp", "2026-01-01T00:00:00.200Z", sx: 300, sy: 400, rx: 200, ry: 300));
 
-        Assert.That(results, Has.Count.EqualTo(1));
-        Assert.Multiple(() =>
-        {
-            Assert.That(results[0].Type, Is.EqualTo("DoubleClick"));
-            Assert.That(results[0].Button, Is.EqualTo("Left"));
-        });
+        var lines = GetOutputLines();
+        Assert.That(lines, Has.Count.EqualTo(1));
+        Assert.That(lines[0].GetProperty("type").GetString(), Is.EqualTo("DragAndDrop"));
+        Assert.That(lines[0].GetProperty("startSx").GetInt32(), Is.EqualTo(100));
+        Assert.That(lines[0].GetProperty("endSx").GetInt32(), Is.EqualTo(300));
     }
 
     [Test]
-    public void 連続2回Click_ちょうどDblClickTimeout_DoubleClickが生成される()
+    public void RightDown_RightUp_RightClickを出力()
     {
-        // 境界値: ちょうど DblClickTimeoutMs (500ms) → DoubleClick になる（<= 判定）
-        var results = new List<AggregatedAction>();
+        var agg = new MouseClickAggregator(_writer);
 
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 50)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", DblClickTimeoutMs)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", DblClickTimeoutMs + 50)));
-        results.AddRange(_aggregator.Flush());
+        agg.Process(MouseEvent("RightDown", "2026-01-01T00:00:00.000Z"));
+        agg.Process(MouseEvent("RightUp", "2026-01-01T00:00:00.050Z"));
 
-        Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Type, Is.EqualTo("DoubleClick"));
+        var lines = GetOutputLines();
+        Assert.That(lines, Has.Count.EqualTo(1));
+        Assert.That(lines[0].GetProperty("type").GetString(), Is.EqualTo("RightClick"));
+        Assert.That(lines[0].GetProperty("button").GetString(), Is.EqualTo("Right"));
     }
 
     [Test]
-    public void 連続2回Click_DblClickTimeoutを1ms超過_個別のClickが2つ生成される()
+    public void WheelUp_WheelScrollを出力()
     {
-        // 境界値: DblClickTimeoutMs + 1 (501ms) → DoubleClick にならない
-        var results = new List<AggregatedAction>();
+        var agg = new MouseClickAggregator(_writer);
 
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 50)));
-        // 2回目のクリック（DblClickTimeout + 1ms 超過）
-        // DoubleClick 待ちタイムアウトは次イベントの CheckTimeouts で発動
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", DblClickTimeoutMs + 1)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", DblClickTimeoutMs + 51)));
-        results.AddRange(_aggregator.Flush());
+        agg.Process(MouseEvent("WheelUp", "2026-01-01T00:00:00.000Z"));
 
-        Assert.That(results, Has.Count.EqualTo(2));
-        Assert.That(results[0].Type, Is.EqualTo("Click"));
-        Assert.That(results[1].Type, Is.EqualTo("Click"));
+        var lines = GetOutputLines();
+        Assert.That(lines, Has.Count.EqualTo(1));
+        Assert.That(lines[0].GetProperty("type").GetString(), Is.EqualTo("WheelScroll"));
+        Assert.That(lines[0].GetProperty("direction").GetString(), Is.EqualTo("Up"));
     }
 
     [Test]
-    public void RightDown_RightUp_RightClickが生成される()
+    public void WheelDown_WheelScrollを出力()
     {
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Mouse("RightDown", 0)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("RightUp", 50)));
-        results.AddRange(_aggregator.Flush());
+        var agg = new MouseClickAggregator(_writer);
 
-        Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Type, Is.EqualTo("RightClick"));
-        Assert.That(results[0].Sx, Is.EqualTo(100));
+        agg.Process(MouseEvent("WheelDown", "2026-01-01T00:00:00.000Z"));
+
+        var lines = GetOutputLines();
+        Assert.That(lines, Has.Count.EqualTo(1));
+        Assert.That(lines[0].GetProperty("type").GetString(), Is.EqualTo("WheelScroll"));
+        Assert.That(lines[0].GetProperty("direction").GetString(), Is.EqualTo("Down"));
     }
 
     [Test]
-    public void WheelUp_WheelScrollが生成される()
+    public void Flush_PendingClick状態でClick出力()
     {
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Mouse("WheelUp", 0, delta: 120)));
-        results.AddRange(_aggregator.Flush());
+        var agg = new MouseClickAggregator(_writer);
 
-        Assert.That(results, Has.Count.EqualTo(1));
-        Assert.Multiple(() =>
-        {
-            Assert.That(results[0].Type, Is.EqualTo("WheelScroll"));
-            Assert.That(results[0].Direction, Is.EqualTo("Up"));
-            Assert.That(results[0].Delta, Is.EqualTo(120));
-            Assert.That(results[0].Count, Is.EqualTo(1));
-        });
+        agg.Process(MouseEvent("LeftDown", "2026-01-01T00:00:00.000Z"));
+        agg.Process(MouseEvent("LeftUp", "2026-01-01T00:00:00.050Z"));
+
+        // Flush前は出力なし（DoubleClick待ち）
+        Assert.That(GetOutputLines(), Has.Count.EqualTo(0));
+
+        agg.Flush();
+
+        var lines = GetOutputLines();
+        Assert.That(lines, Has.Count.EqualTo(1));
+        Assert.That(lines[0].GetProperty("type").GetString(), Is.EqualTo("Click"));
     }
 
     [Test]
-    public void WheelDown_WheelScrollが生成される()
+    public void Flush_PendingUp状態でLeftDownを生イベントとして出力()
     {
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Mouse("WheelDown", 0, delta: -120)));
-        results.AddRange(_aggregator.Flush());
+        var agg = new MouseClickAggregator(_writer);
 
-        Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Type, Is.EqualTo("WheelScroll"));
-        Assert.That(results[0].Direction, Is.EqualTo("Down"));
+        agg.Process(MouseEvent("LeftDown", "2026-01-01T00:00:00.000Z"));
+
+        agg.Flush();
+
+        var lines = GetOutputLines();
+        Assert.That(lines, Has.Count.EqualTo(1));
+        Assert.That(lines[0].GetProperty("action").GetString(), Is.EqualTo("LeftDown"));
     }
 
     [Test]
-    public void Click後にタイムスタンプが離れたイベントで_Click確定される()
+    public void Flush_Dragging状態でLeftDownを生イベントとして出力()
     {
-        var results = new List<AggregatedAction>();
+        var agg = new MouseClickAggregator(_writer);
 
-        // クリック
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 50)));
-        // 十分に離れた次のイベント（DoubleClick 待ちがタイムアウト）
-        results.AddRange(_aggregator.ProcessEvent(Mouse("WheelUp", 900)));
-        results.AddRange(_aggregator.Flush());
+        agg.Process(MouseEvent("LeftDown", "2026-01-01T00:00:00.000Z"));
+        agg.Process(MouseEvent("Move", "2026-01-01T00:00:00.050Z", sx: 150, sy: 250));
 
-        Assert.That(results, Has.Count.EqualTo(2));
-        Assert.That(results[0].Type, Is.EqualTo("Click"));
-        Assert.That(results[1].Type, Is.EqualTo("WheelScroll"));
+        agg.Flush();
+
+        var lines = GetOutputLines();
+        Assert.That(lines, Has.Count.EqualTo(1));
+        Assert.That(lines[0].GetProperty("action").GetString(), Is.EqualTo("LeftDown"));
     }
 
     [Test]
-    public void Flush_保留中のClickが出力される()
+    public void 二回Click_座標がずれていてもDoubleClickと判定()
     {
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 50)));
-        // Flush で pendingClick が出力される
-        results.AddRange(_aggregator.Flush());
+        var agg = new MouseClickAggregator(_writer, dblclickTimeoutMs: 500);
 
-        Assert.That(results, Has.Count.EqualTo(1));
-        Assert.That(results[0].Type, Is.EqualTo("Click"));
-    }
+        agg.Process(MouseEvent("LeftDown", "2026-01-01T00:00:00.000Z", sx: 100, sy: 200));
+        agg.Process(MouseEvent("LeftUp", "2026-01-01T00:00:00.050Z", sx: 100, sy: 200));
+        agg.Process(MouseEvent("LeftDown", "2026-01-01T00:00:00.300Z", sx: 105, sy: 203));
+        agg.Process(MouseEvent("LeftUp", "2026-01-01T00:00:00.350Z", sx: 105, sy: 203));
+        agg.Flush();
 
-    [Test]
-    public void LeftDown座標がClickの座標になる()
-    {
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0, sx: 450, sy: 320, rx: 230, ry: 180)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 50, sx: 452, sy: 322, rx: 232, ry: 182)));
-        results.AddRange(_aggregator.Flush());
-
-        Assert.That(results, Has.Count.EqualTo(1));
-        // Down 時の座標がアクション座標
-        Assert.Multiple(() =>
-        {
-            Assert.That(results[0].Sx, Is.EqualTo(450));
-            Assert.That(results[0].Sy, Is.EqualTo(320));
-            Assert.That(results[0].Rx, Is.EqualTo(230));
-            Assert.That(results[0].Ry, Is.EqualTo(180));
-        });
-    }
-
-    [Test]
-    public void Dragging中にRightDown_ドラッグが中断されイベントがドロップされる()
-    {
-        // Dragging 中の予期しないイベントでドラッグが中断され、
-        // 不完全なジェスチャーとしてドロップされる
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 0, sx: 100, sy: 200)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("Move", 50, sx: 200, sy: 300, drag: true)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("RightDown", 100, sx: 200, sy: 300)));
-        // ドラッグ中断後 Idle に戻る。RightDown は Idle の default で無視される。
-        // RightUp も Idle の default で無視される。
-        results.AddRange(_aggregator.ProcessEvent(Mouse("RightUp", 150, sx: 200, sy: 300)));
-        results.AddRange(_aggregator.Flush());
-
-        Assert.That(results, Is.Empty);
-    }
-
-    [Test]
-    public void RightDown保留中にLeftDown_RightDown破棄されLeftDown処理が開始する()
-    {
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Mouse("RightDown", 0, sx: 100, sy: 200, rx: 50, ry: 100)));
-        // RightDown 保留中に LeftDown → RightDown 破棄、PendingUp 状態に遷移
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftDown", 50, sx: 300, sy: 400, rx: 150, ry: 200)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("LeftUp", 100, sx: 300, sy: 400, rx: 150, ry: 200)));
-        results.AddRange(_aggregator.Flush());
-
-        Assert.That(results, Has.Count.EqualTo(1));
-        Assert.Multiple(() =>
-        {
-            Assert.That(results[0].Type, Is.EqualTo("Click"));
-            Assert.That(results[0].Sx, Is.EqualTo(300));
-        });
-    }
-
-    [Test]
-    public void RightDown保留中にWheelUp_保留状態が破棄される()
-    {
-        // HandlePendingRightUp の default ブランチ: Idle に戻る
-        var results = new List<AggregatedAction>();
-        results.AddRange(_aggregator.ProcessEvent(Mouse("RightDown", 0)));
-        results.AddRange(_aggregator.ProcessEvent(Mouse("WheelUp", 50, delta: 120)));
-        results.AddRange(_aggregator.Flush());
-
-        // RightDown は破棄される。WheelUp は PendingRightUp の default で Idle に戻った後、
-        // 再処理されないため出力なし。
-        Assert.That(results, Is.Empty);
+        var lines = GetOutputLines();
+        Assert.That(lines, Has.Count.EqualTo(1));
+        Assert.That(lines[0].GetProperty("type").GetString(), Is.EqualTo("DoubleClick"));
     }
 }

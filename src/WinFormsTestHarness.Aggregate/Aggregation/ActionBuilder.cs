@@ -1,140 +1,104 @@
-using System.Text.Json;
 using WinFormsTestHarness.Aggregate.Models;
 using WinFormsTestHarness.Common.Cli;
 using WinFormsTestHarness.Common.IO;
-using WinFormsTestHarness.Common.Serialization;
 
 namespace WinFormsTestHarness.Aggregate.Aggregation;
 
 /// <summary>
-/// MouseClickAggregator と KeySequenceAggregator を統合し、
-/// stdin から NDJSON を読み込んで集約済みアクションを stdout に出力する。
-/// screenshot / session / system / window イベントはパススルー。
+/// 生イベントストリームを読み込み、type でルーティングして集約する。
+/// mouse → MouseClickAggregator, key → KeySequenceAggregator,
+/// その他（session, screenshot, system, window）→ パススルー。
 /// </summary>
 public class ActionBuilder
 {
-    private static readonly HashSet<string> PassthroughTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "screenshot", "session", "system", "window",
-    };
-
+    private readonly TextReader _input;
+    private readonly NdJsonWriter _output;
+    private readonly DiagnosticContext _diag;
     private readonly MouseClickAggregator _mouseAggregator;
     private readonly KeySequenceAggregator _keyAggregator;
-    private readonly DiagnosticContext _diag;
+
+    private static readonly HashSet<string> PassthroughTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "session", "screenshot", "system", "window"
+    };
 
     public ActionBuilder(
+        TextReader input,
+        NdJsonWriter output,
+        DiagnosticContext diag,
         int clickTimeoutMs = 300,
         int dblclickTimeoutMs = 500,
-        int textTimeoutMs = 500,
-        DiagnosticContext? diag = null)
+        int textTimeoutMs = 500)
     {
-        _mouseAggregator = new MouseClickAggregator(clickTimeoutMs, dblclickTimeoutMs);
-        _keyAggregator = new KeySequenceAggregator(textTimeoutMs);
-        _diag = diag ?? new DiagnosticContext(false, true);
+        _input = input;
+        _output = output;
+        _diag = diag;
+        _mouseAggregator = new MouseClickAggregator(output, clickTimeoutMs, dblclickTimeoutMs);
+        _keyAggregator = new KeySequenceAggregator(output, textTimeoutMs);
     }
 
-    /// <summary>
-    /// TextReader から NDJSON を読み込み、集約済みアクションを TextWriter に出力する。
-    /// </summary>
-    public void Process(TextReader input, TextWriter output)
+    public int Run()
     {
-        var writer = new NdJsonWriter(output);
         int lineNumber = 0;
-
+        int processedCount = 0;
+        int skippedCount = 0;
         string? line;
-        while ((line = input.ReadLine()) != null)
+
+        while ((line = _input.ReadLine()) != null)
         {
             lineNumber++;
 
             if (string.IsNullOrWhiteSpace(line))
                 continue;
 
-            JsonElement root;
-            try
+            var evt = RawEvent.Parse(line);
+            if (evt == null)
             {
-                using var doc = JsonDocument.Parse(line);
-                root = doc.RootElement.Clone();
-            }
-            catch (JsonException ex)
-            {
-                _diag.Warn($"NDJSON parse error at line {lineNumber}: {ex.Message}");
+                _diag.Warn($"NDJSON parse error at line {lineNumber}");
+                skippedCount++;
                 continue;
             }
 
-            if (!root.TryGetProperty("type", out var typeProp))
-            {
-                _diag.Warn($"Missing 'type' field at line {lineNumber}");
-                continue;
-            }
+            // タイムアウトチェック（各イベント処理前）
+            _mouseAggregator.CheckTimeout(evt.Ts);
+            _keyAggregator.CheckTimeout(evt.Ts);
 
-            var type = typeProp.GetString();
-            var ts = root.TryGetProperty("ts", out var tsProp) ? tsProp.GetString() : null;
-
-            // 両アグリゲーターのタイムアウトチェック
-            if (ts != null)
-            {
-                foreach (var action in _mouseAggregator.CheckTimeouts(ts))
-                    writer.Write(action);
-                foreach (var action in _keyAggregator.CheckTimeouts(ts))
-                    writer.Write(action);
-            }
-
-            switch (type)
+            switch (evt.Type)
             {
                 case "mouse":
-                    ProcessMouseEvent(line, writer);
+                    // マウスイベント前にキーバッファをフラッシュ
+                    _keyAggregator.Flush();
+                    _mouseAggregator.Process(evt);
                     break;
 
                 case "key":
-                    ProcessKeyEvent(line, writer);
+                    _keyAggregator.Process(evt);
                     break;
 
                 default:
-                    if (type != null && PassthroughTypes.Contains(type))
+                    if (PassthroughTypes.Contains(evt.Type))
                     {
-                        // パススルー: 元の JSON 行をそのまま出力
-                        output.WriteLine(line);
-                        output.Flush();
+                        // パススルー前に両方フラッシュ
+                        _mouseAggregator.Flush();
+                        _keyAggregator.Flush();
+                        _output.WriteRaw(evt.RawJson);
                     }
                     else
                     {
-                        _diag.DebugLog($"Unknown event type '{type}' at line {lineNumber}, passing through");
-                        output.WriteLine(line);
-                        output.Flush();
+                        _diag.Warn($"Unknown event type '{evt.Type}' at line {lineNumber}, passing through");
+                        _output.WriteRaw(evt.RawJson);
                     }
                     break;
             }
+
+            processedCount++;
         }
 
-        // EOF: 残りバッファをフラッシュ
-        foreach (var action in _keyAggregator.Flush())
-            writer.Write(action);
-        foreach (var action in _mouseAggregator.Flush())
-            writer.Write(action);
-    }
+        // EOF: 両アグリゲータをフラッシュ
+        _mouseAggregator.Flush();
+        _keyAggregator.Flush();
 
-    private void ProcessMouseEvent(string line, NdJsonWriter writer)
-    {
-        var mouseEvent = JsonHelper.Deserialize<RawMouseEvent>(line);
-        if (mouseEvent == null) return;
-
-        // マウスクリック座標をキーアグリゲーターのコンテキストに設定
-        if (mouseEvent.Action is "LeftDown" or "LeftUp" or "RightDown" or "RightUp")
-        {
-            _keyAggregator.SetCoordinateContext(
-                mouseEvent.Sx, mouseEvent.Sy, mouseEvent.Rx, mouseEvent.Ry);
-        }
-
-        foreach (var action in _mouseAggregator.ProcessEvent(mouseEvent))
-            writer.Write(action);
-    }
-
-    private void ProcessKeyEvent(string line, NdJsonWriter writer)
-    {
-        var keyEvent = JsonHelper.Deserialize<RawKeyEvent>(line);
-        if (keyEvent == null) return;
-
-        foreach (var action in _keyAggregator.ProcessEvent(keyEvent))
-            writer.Write(action);
+        _diag.Info($"wfth-aggregate: {processedCount} events processed, {skippedCount} skipped");
+        return ExitCodes.Success;
     }
 }

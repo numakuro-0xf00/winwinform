@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /mnt/c/Users/home/source/repos/winwinform diff)",
+      "Bash(git -C /mnt/c/Users/home/source/repos/winwinform log --oneline -5)",
+      "Bash(git -C /mnt/c/Users/home/source/repos/winwinform add \\\\\n  CLAUDE.md \\\\\n  Directory.Build.props \\\\\n  WinFormsTestHarness.sln \\\\\n  doc/winforms-e2e-test-platform-design.md \\\\\n  samples/ \\\\\n  src/ \\\\\n  tests/)",
+      "Bash(git -C /mnt/c/Users/home/source/repos/winwinform commit -m \"$\\(cat <<'EOF'\nMilestone 1: ソリューション構造 + MVP 0 \\(SampleApp\\) + MVP A \\(wfth-inspect\\)\n\n8プロジェクト構成のソリューションを作成し、SampleApp（顧客管理WinFormsアプリ）と\nwfth-inspect（UIAツリー偵察CLI）を実装。スケルトンプロジェクト5つを含む。\nE2ETestビルド構成でE2E_TESTシンボルを定義。全プロジェクト0警告0エラーでビルド確認済み。\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git -C /mnt/c/Users/home/source/repos/winwinform status)",
+      "Bash(git -C /mnt/c/Users/home/source/repos/winwinform add CLAUDE.md && git -C /mnt/c/Users/home/source/repos/winwinform commit -m \"$\\(cat <<'EOF'\nCLAUDE.mdにGit Workflowセクションを追加\n\n作業単位ごとのブランチ作成とgh PRワークフローを規定。\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\" && git -C /mnt/c/Users/home/source/repos/winwinform push)",
+      "Bash(\"/mnt/c/Program Files/dotnet/dotnet.exe\" build samples/SampleApp/SampleApp.csproj 2>&1 | tail -5)",
+      "Bash(git -C /mnt/c/Users/home/source/repos/winwinform add samples/SampleApp/MainForm.Designer.cs && git -C /mnt/c/Users/home/source/repos/winwinform commit -m \"$\\(cat <<'EOF'\nMainFormに汎用テスト用TextBoxとButtonを追加\n\nUIA検証用のダミーコントロール（txtTest, btnTest）をMainForm下部に配置。\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\" && git -C /mnt/c/Users/home/source/repos/winwinform push -u origin feature/add-test-controls-to-mainform)",
+      "Bash(gh pr create --repo numakuro-0xf00/winwinform --title \"MainFormに汎用テスト用TextBoxとButtonを追加\" --body \"$\\(cat <<'EOF'\n## Summary\n- MainForm下部にテスト用Panel（pnlTest）を追加\n- TextBox（txtTest）とButton（btnTest）をUIA検証用ダミーコントロールとして配置\n\n## Test plan\n- [ ] SampleAppを起動し、MainForm下部にTextBoxとButtonが表示されることを確認\n- [ ] wfth-inspectでtxtTest, btnTestのAutomationIdが取得できることを確認\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\nEOF\n\\)\")",
+      "Bash(git -C /mnt/c/Users/home/source/repos/winwinform add samples/SampleApp/MainForm.Designer.cs && git -C /mnt/c/Users/home/source/repos/winwinform commit -m \"$\\(cat <<'EOF'\nテスト用コントロールのレイアウトをデザイナーで調整\n\nbtnTestがウィンドウ外に配置されていたため、デザイナーで位置・サイズを修正。\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\" && git -C /mnt/c/Users/home/source/repos/winwinform push)",
+      "Bash(git -C /mnt/c/Users/home/source/repos/winwinform switch main && git -C /mnt/c/Users/home/source/repos/winwinform pull)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "gemini-cli",
+    "microsoft-docs"
+  ]
+}

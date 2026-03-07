@@ -1,44 +1,76 @@
+using System.Text.Json.Serialization;
+
 namespace WinFormsTestHarness.Aggregate.Models;
 
-/// <summary>
-/// 集約済みアクション DTO。
-/// Click, DoubleClick, RightClick, DragAndDrop, TextInput, SpecialKey, WheelScroll の
-/// 全フィールドをカバーし、不要なフィールドは null（JSON 出力で省略）。
-/// </summary>
-public class AggregatedAction
+public class ClickAction
 {
-    public string? Ts { get; set; }
-    public string? Type { get; set; }
+    [JsonPropertyName("ts")] public string Ts { get; set; } = "";
+    [JsonPropertyName("type")] public string Type => "Click";
+    [JsonPropertyName("button")] public string Button { get; set; } = "Left";
+    [JsonPropertyName("sx")] public int Sx { get; set; }
+    [JsonPropertyName("sy")] public int Sy { get; set; }
+    [JsonPropertyName("rx")] public int Rx { get; set; }
+    [JsonPropertyName("ry")] public int Ry { get; set; }
+}
 
-    // Click / DoubleClick / RightClick
-    public string? Button { get; set; }
+public class DoubleClickAction
+{
+    [JsonPropertyName("ts")] public string Ts { get; set; } = "";
+    [JsonPropertyName("type")] public string Type => "DoubleClick";
+    [JsonPropertyName("button")] public string Button { get; set; } = "Left";
+    [JsonPropertyName("sx")] public int Sx { get; set; }
+    [JsonPropertyName("sy")] public int Sy { get; set; }
+    [JsonPropertyName("rx")] public int Rx { get; set; }
+    [JsonPropertyName("ry")] public int Ry { get; set; }
+}
 
-    // 座標（Click, RightClick, DoubleClick, TextInput, SpecialKey, WheelScroll）
-    public int? Sx { get; set; }
-    public int? Sy { get; set; }
-    public int? Rx { get; set; }
-    public int? Ry { get; set; }
+public class RightClickAction
+{
+    [JsonPropertyName("ts")] public string Ts { get; set; } = "";
+    [JsonPropertyName("type")] public string Type => "RightClick";
+    [JsonPropertyName("button")] public string Button => "Right";
+    [JsonPropertyName("sx")] public int Sx { get; set; }
+    [JsonPropertyName("sy")] public int Sy { get; set; }
+    [JsonPropertyName("rx")] public int Rx { get; set; }
+    [JsonPropertyName("ry")] public int Ry { get; set; }
+}
 
-    // TextInput
-    public string? Text { get; set; }
-    public string? StartTs { get; set; }
-    public string? EndTs { get; set; }
+public class DragAndDropAction
+{
+    [JsonPropertyName("ts")] public string Ts { get; set; } = "";
+    [JsonPropertyName("type")] public string Type => "DragAndDrop";
+    [JsonPropertyName("startSx")] public int StartSx { get; set; }
+    [JsonPropertyName("startSy")] public int StartSy { get; set; }
+    [JsonPropertyName("startRx")] public int StartRx { get; set; }
+    [JsonPropertyName("startRy")] public int StartRy { get; set; }
+    [JsonPropertyName("endSx")] public int EndSx { get; set; }
+    [JsonPropertyName("endSy")] public int EndSy { get; set; }
+    [JsonPropertyName("endRx")] public int EndRx { get; set; }
+    [JsonPropertyName("endRy")] public int EndRy { get; set; }
+}
 
-    // SpecialKey
-    public string? Key { get; set; }
+public class TextInputAction
+{
+    [JsonPropertyName("ts")] public string Ts { get; set; } = "";
+    [JsonPropertyName("type")] public string Type => "TextInput";
+    [JsonPropertyName("text")] public string Text { get; set; } = "";
+}
 
-    // DragAndDrop
-    public int? StartSx { get; set; }
-    public int? StartSy { get; set; }
-    public int? EndSx { get; set; }
-    public int? EndSy { get; set; }
-    public int? StartRx { get; set; }
-    public int? StartRy { get; set; }
-    public int? EndRx { get; set; }
-    public int? EndRy { get; set; }
+public class SpecialKeyAction
+{
+    [JsonPropertyName("ts")] public string Ts { get; set; } = "";
+    [JsonPropertyName("type")] public string Type => "SpecialKey";
+    [JsonPropertyName("key")] public string Key { get; set; } = "";
+    [JsonPropertyName("vk")] public int Vk { get; set; }
+}
 
-    // WheelScroll
-    public string? Direction { get; set; }
-    public int? Delta { get; set; }
-    public int? Count { get; set; }
+public class WheelScrollAction
+{
+    [JsonPropertyName("ts")] public string Ts { get; set; } = "";
+    [JsonPropertyName("type")] public string Type => "WheelScroll";
+    [JsonPropertyName("direction")] public string Direction { get; set; } = "";
+    [JsonPropertyName("sx")] public int Sx { get; set; }
+    [JsonPropertyName("sy")] public int Sy { get; set; }
+    [JsonPropertyName("rx")] public int Rx { get; set; }
+    [JsonPropertyName("ry")] public int Ry { get; set; }
 }

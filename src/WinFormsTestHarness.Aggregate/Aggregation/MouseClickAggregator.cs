@@ -1,307 +1,247 @@
 using WinFormsTestHarness.Aggregate.Models;
+using WinFormsTestHarness.Common.IO;
 
 namespace WinFormsTestHarness.Aggregate.Aggregation;
 
 /// <summary>
-/// マウスイベントの集約状態マシン。
-/// LeftDown+Up → Click, 2x Click → DoubleClick, LeftDown+Move(drag)+Up → DragAndDrop,
-/// RightDown+Up → RightClick, WheelUp/Down → WheelScroll に変換する。
+/// 生マウスイベントを状態機械で集約し、Click / DoubleClick / RightClick / DragAndDrop / WheelScroll に変換する。
 /// </summary>
 public class MouseClickAggregator
 {
-    private enum State { Idle, PendingUp, PendingRightUp, Dragging }
+    private enum State { Idle, PendingUp, PendingClick, Dragging, PendingDoubleClickUp }
 
+    private readonly NdJsonWriter _writer;
     private readonly int _clickTimeoutMs;
     private readonly int _dblclickTimeoutMs;
 
     private State _state = State.Idle;
-    private RawMouseEvent? _pendingDown;
-    private RawMouseEvent? _lastDragMove;
-    private AggregatedAction? _pendingClick;
 
-    public MouseClickAggregator(int clickTimeoutMs = 300, int dblclickTimeoutMs = 500)
+    // PendingUp / Dragging: the original down event
+    private RawEvent? _downEvent;
+
+    // PendingClick: stored click info
+    private RawEvent? _clickUpEvent;
+
+    // RightClick: simple flag
+    private RawEvent? _rightDownEvent;
+
+    public MouseClickAggregator(NdJsonWriter writer, int clickTimeoutMs = 300, int dblclickTimeoutMs = 500)
     {
+        _writer = writer;
         _clickTimeoutMs = clickTimeoutMs;
         _dblclickTimeoutMs = dblclickTimeoutMs;
     }
 
-    /// <summary>
-    /// マウスイベントを処理し、集約済みアクションを 0 個以上返す。
-    /// </summary>
-    public IEnumerable<AggregatedAction> ProcessEvent(RawMouseEvent e)
+    public void Process(RawEvent evt)
     {
-        // PendingUp + LeftUp の場合は DoubleClick 判定を優先する
-        // （CheckTimeouts が pendingClick をフラッシュする前に判定する必要がある）
-        if (_state == State.PendingUp && e.Action == "LeftUp")
+        if (evt.Type != "mouse")
         {
-            foreach (var action in HandlePendingUp(e))
-                yield return action;
-            yield break;
+            // Non-mouse event: flush pending click if any, then pass through
+            if (_state == State.PendingClick)
+            {
+                OutputClick(_clickUpEvent!);
+                ResetState();
+            }
+            return;
         }
 
-        // その他のイベントではタイムアウトチェックを先に実行
-        foreach (var action in CheckTimeouts(e.Ts!))
-            yield return action;
+        CheckTimeout(evt.Ts);
+        HandleMouseEvent(evt);
+    }
 
+    public void CheckTimeout(DateTimeOffset currentTs)
+    {
+        switch (_state)
+        {
+            case State.PendingUp:
+                if (_downEvent != null && (currentTs - _downEvent.Ts).TotalMilliseconds >= _clickTimeoutMs)
+                {
+                    _writer.WriteRaw(_downEvent.RawJson);
+                    ResetState();
+                }
+                break;
+
+            case State.PendingClick:
+                if (_clickUpEvent != null && (currentTs - _clickUpEvent.Ts).TotalMilliseconds >= _dblclickTimeoutMs)
+                {
+                    OutputClick(_clickUpEvent);
+                    ResetState();
+                }
+                break;
+        }
+    }
+
+    public void Flush()
+    {
+        switch (_state)
+        {
+            case State.PendingUp:
+            case State.Dragging:
+                if (_downEvent != null)
+                    _writer.WriteRaw(_downEvent.RawJson);
+                break;
+
+            case State.PendingClick:
+                if (_clickUpEvent != null)
+                    OutputClick(_clickUpEvent);
+                break;
+
+            case State.PendingDoubleClickUp:
+                // 1st click confirmed, 2nd incomplete → output Click + raw LeftDown
+                if (_clickUpEvent != null)
+                    OutputClick(_clickUpEvent);
+                if (_downEvent != null)
+                    _writer.WriteRaw(_downEvent.RawJson);
+                break;
+        }
+        ResetState();
+    }
+
+    private void HandleMouseEvent(RawEvent evt)
+    {
+        // Wheel events are immediate
+        if (evt.Action is "WheelUp" or "WheelDown")
+        {
+            _writer.Write(new WheelScrollAction
+            {
+                Ts = evt.TsString,
+                Direction = evt.Action == "WheelUp" ? "Up" : "Down",
+                Sx = evt.Sx ?? 0,
+                Sy = evt.Sy ?? 0,
+                Rx = evt.Rx ?? 0,
+                Ry = evt.Ry ?? 0,
+            });
+            return;
+        }
+
+        // Right-click: immediate pair matching
+        if (evt.Action == "RightDown")
+        {
+            _rightDownEvent = evt;
+            return;
+        }
+
+        if (evt.Action == "RightUp")
+        {
+            var down = _rightDownEvent ?? evt;
+            _writer.Write(new RightClickAction
+            {
+                Ts = down.TsString,
+                Sx = down.Sx ?? 0,
+                Sy = down.Sy ?? 0,
+                Rx = down.Rx ?? 0,
+                Ry = down.Ry ?? 0,
+            });
+            _rightDownEvent = null;
+            return;
+        }
+
+        // Left-button state machine
         switch (_state)
         {
             case State.Idle:
-                foreach (var action in HandleIdle(e))
-                    yield return action;
+                if (evt.Action == "LeftDown")
+                {
+                    _downEvent = evt;
+                    _state = State.PendingUp;
+                }
                 break;
 
             case State.PendingUp:
-                foreach (var action in HandlePendingUp(e))
-                    yield return action;
-                break;
-
-            case State.PendingRightUp:
-                foreach (var action in HandlePendingRightUp(e))
-                    yield return action;
-                break;
-
-            case State.Dragging:
-                foreach (var action in HandleDragging(e))
-                    yield return action;
-                break;
-        }
-    }
-
-    /// <summary>
-    /// タイムスタンプに基づいてタイムアウトした保留状態をフラッシュする。
-    /// </summary>
-    public IEnumerable<AggregatedAction> CheckTimeouts(string? currentTs)
-    {
-        if (currentTs == null) yield break;
-
-        // DoubleClick 待ちタイムアウト
-        if (_pendingClick != null && DurationMs(_pendingClick.Ts!, currentTs) > _dblclickTimeoutMs)
-        {
-            yield return _pendingClick;
-            _pendingClick = null;
-        }
-
-        // PendingUp タイムアウト（LeftDown 後に LeftUp が来ない）
-        if (_state == State.PendingUp && _pendingDown != null &&
-            DurationMs(_pendingDown.Ts!, currentTs) > _clickTimeoutMs)
-        {
-            // タイムアウト: LeftDown を単体イベントとしてフラッシュしない（後続 Up を待つ）
-            // ただし click-timeout 超過なので Dragging 扱いへ遷移するか、
-            // LeftUp が来たときに Click にならないようにする
-            // → 状態はそのまま保持し、LeftUp 到着時に timeout 判定する
-        }
-    }
-
-    /// <summary>
-    /// 残りの保留状態をすべてフラッシュする（EOF 時に呼び出す）。
-    /// </summary>
-    public IEnumerable<AggregatedAction> Flush()
-    {
-        if (_pendingClick != null)
-        {
-            yield return _pendingClick;
-            _pendingClick = null;
-        }
-
-        // PendingUp/Dragging の未完了状態はドロップ（不完全なジェスチャー）
-        _state = State.Idle;
-        _pendingDown = null;
-        _lastDragMove = null;
-    }
-
-    private IEnumerable<AggregatedAction> HandleIdle(RawMouseEvent e)
-    {
-        switch (e.Action)
-        {
-            case "LeftDown":
-                _state = State.PendingUp;
-                _pendingDown = e;
-                break;
-
-            case "RightDown":
-                _state = State.PendingRightUp;
-                _pendingDown = e;
-                break;
-
-            case "WheelUp":
-            case "WheelDown":
-                yield return CreateWheelScroll(e);
-                break;
-
-            // Move, LeftUp, RightUp は Idle では無視
-        }
-    }
-
-    private IEnumerable<AggregatedAction> HandlePendingUp(RawMouseEvent e)
-    {
-        switch (e.Action)
-        {
-            case "LeftUp":
-                var duration = DurationMs(_pendingDown!.Ts!, e.Ts!);
-                if (duration <= _clickTimeoutMs)
+                if (evt.Action == "LeftUp")
                 {
-                    // Click 候補
-                    var click = CreateClick(_pendingDown!);
-                    _state = State.Idle;
-                    _pendingDown = null;
-
-                    // DoubleClick チェック
-                    if (_pendingClick != null &&
-                        DurationMs(_pendingClick.Ts!, click.Ts!) <= _dblclickTimeoutMs)
+                    if ((evt.Ts - _downEvent!.Ts).TotalMilliseconds < _clickTimeoutMs)
                     {
-                        // DoubleClick に昇格
-                        _pendingClick.Type = "DoubleClick";
-                        yield return _pendingClick;
-                        _pendingClick = null;
+                        // Click candidate
+                        _clickUpEvent = _downEvent;
+                        _state = State.PendingClick;
                     }
                     else
                     {
-                        // 前の pendingClick があれば先に出力
-                        if (_pendingClick != null)
-                        {
-                            yield return _pendingClick;
-                        }
-                        _pendingClick = click;
+                        // Too slow for click, pass through raw
+                        _writer.WriteRaw(_downEvent!.RawJson);
+                        _writer.WriteRaw(evt.RawJson);
+                        ResetState();
                     }
+                }
+                else if (evt.Action == "Move")
+                {
+                    _state = State.Dragging;
+                }
+                break;
+
+            case State.PendingClick:
+                if (evt.Action == "LeftDown" &&
+                    (evt.Ts - _clickUpEvent!.Ts).TotalMilliseconds < _dblclickTimeoutMs)
+                {
+                    _downEvent = evt;
+                    _state = State.PendingDoubleClickUp;
                 }
                 else
                 {
-                    // click-timeout 超過 → Click にならない。
-                    // Down + Up を個別イベントとしてフラッシュ（集約不可）
-                    _state = State.Idle;
-                    _pendingDown = null;
+                    OutputClick(_clickUpEvent!);
+                    ResetState();
+                    // Re-process this event in Idle state
+                    if (evt.Action == "LeftDown")
+                    {
+                        _downEvent = evt;
+                        _state = State.PendingUp;
+                    }
                 }
                 break;
 
-            case "Move":
-                if (e.Drag)
+            case State.PendingDoubleClickUp:
+                if (evt.Action == "LeftUp")
                 {
-                    _state = State.Dragging;
-                    _lastDragMove = e;
+                    _writer.Write(new DoubleClickAction
+                    {
+                        Ts = _clickUpEvent!.TsString,
+                        Sx = _clickUpEvent.Sx ?? 0,
+                        Sy = _clickUpEvent.Sy ?? 0,
+                        Rx = _clickUpEvent.Rx ?? 0,
+                        Ry = _clickUpEvent.Ry ?? 0,
+                    });
+                    ResetState();
                 }
                 break;
 
-            case "WheelUp":
-            case "WheelDown":
-                // LeftDown 保留中にホイール → LeftDown は不完全、ドロップ
-                _state = State.Idle;
-                _pendingDown = null;
-                yield return CreateWheelScroll(e);
-                break;
-
-            case "LeftDown":
-                // 新たな LeftDown → 前の PendingUp を破棄してリセット
-                _pendingDown = e;
-                break;
-
-            case "RightDown":
-                // LeftDown 保留中に RightDown → LeftDown 破棄
-                _state = State.PendingRightUp;
-                _pendingDown = e;
+            case State.Dragging:
+                if (evt.Action == "LeftUp")
+                {
+                    _writer.Write(new DragAndDropAction
+                    {
+                        Ts = _downEvent!.TsString,
+                        StartSx = _downEvent.Sx ?? 0,
+                        StartSy = _downEvent.Sy ?? 0,
+                        StartRx = _downEvent.Rx ?? 0,
+                        StartRy = _downEvent.Ry ?? 0,
+                        EndSx = evt.Sx ?? 0,
+                        EndSy = evt.Sy ?? 0,
+                        EndRx = evt.Rx ?? 0,
+                        EndRy = evt.Ry ?? 0,
+                    });
+                    ResetState();
+                }
                 break;
         }
     }
 
-    private IEnumerable<AggregatedAction> HandlePendingRightUp(RawMouseEvent e)
+    private void OutputClick(RawEvent evt)
     {
-        switch (e.Action)
+        _writer.Write(new ClickAction
         {
-            case "RightUp":
-                yield return CreateRightClick(_pendingDown!);
-                _state = State.Idle;
-                _pendingDown = null;
-                break;
-
-            case "LeftDown":
-                // RightDown 保留中に LeftDown → RightDown 破棄
-                _state = State.PendingUp;
-                _pendingDown = e;
-                break;
-
-            default:
-                // その他 → 保留状態を破棄
-                _state = State.Idle;
-                _pendingDown = null;
-                break;
-        }
+            Ts = evt.TsString,
+            Sx = evt.Sx ?? 0,
+            Sy = evt.Sy ?? 0,
+            Rx = evt.Rx ?? 0,
+            Ry = evt.Ry ?? 0,
+        });
     }
 
-    private IEnumerable<AggregatedAction> HandleDragging(RawMouseEvent e)
+    private void ResetState()
     {
-        switch (e.Action)
-        {
-            case "LeftUp":
-                yield return CreateDragAndDrop(_pendingDown!, _lastDragMove ?? e);
-                _state = State.Idle;
-                _pendingDown = null;
-                _lastDragMove = null;
-                break;
-
-            case "Move":
-                _lastDragMove = e;
-                break;
-
-            default:
-                // ドラッグ中に予期しないイベント → ドラッグ中断
-                _state = State.Idle;
-                _pendingDown = null;
-                _lastDragMove = null;
-                break;
-        }
-    }
-
-    private static AggregatedAction CreateClick(RawMouseEvent down) => new()
-    {
-        Ts = down.Ts,
-        Type = "Click",
-        Button = "Left",
-        Sx = down.Sx,
-        Sy = down.Sy,
-        Rx = down.Rx,
-        Ry = down.Ry,
-    };
-
-    private static AggregatedAction CreateRightClick(RawMouseEvent down) => new()
-    {
-        Ts = down.Ts,
-        Type = "RightClick",
-        Sx = down.Sx,
-        Sy = down.Sy,
-        Rx = down.Rx,
-        Ry = down.Ry,
-    };
-
-    private static AggregatedAction CreateDragAndDrop(RawMouseEvent down, RawMouseEvent end) => new()
-    {
-        Ts = down.Ts,
-        Type = "DragAndDrop",
-        StartSx = down.Sx,
-        StartSy = down.Sy,
-        EndSx = end.Sx,
-        EndSy = end.Sy,
-        StartRx = down.Rx,
-        StartRy = down.Ry,
-        EndRx = end.Rx,
-        EndRy = end.Ry,
-    };
-
-    private static AggregatedAction CreateWheelScroll(RawMouseEvent e) => new()
-    {
-        Ts = e.Ts,
-        Type = "WheelScroll",
-        Direction = e.Action == "WheelUp" ? "Up" : "Down",
-        Delta = e.Delta,
-        Count = 1,
-        Sx = e.Sx,
-        Sy = e.Sy,
-        Rx = e.Rx,
-        Ry = e.Ry,
-    };
-
-    private static double DurationMs(string ts1, string ts2)
-    {
-        var t1 = DateTimeOffset.Parse(ts1, null, System.Globalization.DateTimeStyles.RoundtripKind);
-        var t2 = DateTimeOffset.Parse(ts2, null, System.Globalization.DateTimeStyles.RoundtripKind);
-        return (t2 - t1).TotalMilliseconds;
+        _state = State.Idle;
+        _downEvent = null;
+        _clickUpEvent = null;
     }
 }

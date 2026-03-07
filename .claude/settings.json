@@ -24,8 +24,7 @@
       "Bash(pwd)",
       "Bash(which *)",
       "Bash(dotnet-script *)",
-      "Skill(roslyn-query*)",
-      "git * add"
+      "Skill(roslyn-query*)"
     ],
     "deny": []
   },
