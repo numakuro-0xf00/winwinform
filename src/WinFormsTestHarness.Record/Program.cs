@@ -4,6 +4,7 @@ using System.Diagnostics;
 using WinFormsTestHarness.Common.Cli;
 using WinFormsTestHarness.Common.IO;
 using WinFormsTestHarness.Common.Windows;
+using WinFormsTestHarness.Capture;
 using WinFormsTestHarness.Record;
 using WinFormsTestHarness.Record.Hooks;
 
@@ -15,9 +16,23 @@ var outOption = CommonOptions.Output();
 var debugOption = CommonOptions.Debug();
 var quietOption = CommonOptions.Quiet();
 
+// Capture options
+var captureOption = new Option<bool>("--capture", "キャプチャを有効にする");
+var captureLevelOption = new Option<int>("--capture-level", () => 1, "キャプチャレベル (0:None, 1:AfterOnly, 2:BeforeAfter, 3:All)");
+var captureQualityOption = new Option<string>("--capture-quality", () => "medium", "キャプチャ画質 (low|medium|high|full)");
+var captureDirOption = new Option<string>("--capture-dir", () => "./screenshots", "スクリーンショット保存先");
+var captureDelayOption = new Option<int>("--capture-delay", () => 300, "after 撮影待機時間 (ms)");
+var diffThresholdOption = new Option<double>("--diff-threshold", () => 2.0, "差分検知閾値 (%)");
+
 rootCommand.AddOption(processOption);
 rootCommand.AddOption(hwndOption);
 rootCommand.AddOption(outOption);
+rootCommand.AddOption(captureOption);
+rootCommand.AddOption(captureLevelOption);
+rootCommand.AddOption(captureQualityOption);
+rootCommand.AddOption(captureDirOption);
+rootCommand.AddOption(captureDelayOption);
+rootCommand.AddOption(diffThresholdOption);
 rootCommand.AddGlobalOption(debugOption);
 rootCommand.AddGlobalOption(quietOption);
 
@@ -28,6 +43,12 @@ rootCommand.SetHandler(async (InvocationContext ctx) =>
     var outPath = ctx.ParseResult.GetValueForOption(outOption);
     var debug = ctx.ParseResult.GetValueForOption(debugOption);
     var quiet = ctx.ParseResult.GetValueForOption(quietOption);
+    var captureEnabled = ctx.ParseResult.GetValueForOption(captureOption);
+    var captureLevel = ctx.ParseResult.GetValueForOption(captureLevelOption);
+    var captureQuality = ctx.ParseResult.GetValueForOption(captureQualityOption)!;
+    var captureDir = ctx.ParseResult.GetValueForOption(captureDirOption)!;
+    var captureDelay = ctx.ParseResult.GetValueForOption(captureDelayOption);
+    var diffThreshold = ctx.ParseResult.GetValueForOption(diffThresholdOption);
 
     var diag = new DiagnosticContext(debug, quiet);
 
@@ -87,9 +108,28 @@ rootCommand.SetHandler(async (InvocationContext ctx) =>
             cts.Cancel();
         };
 
+        // キャプチャ設定
+        CaptureSettings? captureSettings = null;
+        if (captureEnabled)
+        {
+            var quality = Enum.TryParse<CaptureQuality>(captureQuality, ignoreCase: true, out var q)
+                ? q
+                : CaptureQuality.Medium;
+
+            captureSettings = new CaptureSettings
+            {
+                Level = (CaptureLevel)captureLevel,
+                Options = new CaptureOptions { Quality = quality },
+                OutputDir = captureDir,
+                AfterDelayMs = captureDelay,
+                DiffThreshold = diffThreshold / 100.0,
+            };
+        }
+
         // 記録セッション実行
         using var session = new RecordingSession(
-            targetHwnd, targetPid, processName, writer, diag);
+            targetHwnd, targetPid, processName, writer, diag,
+            captureSettings: captureSettings);
 
         ctx.ExitCode = await session.RunAsync(cts.Token);
     }
